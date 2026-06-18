@@ -255,10 +255,10 @@ async def _handle_compact(memory_agent: MemoryAgent) -> None:
     try:
         summary = await memory_agent.compact()
         new_count = memory_agent.store.count
-        print(f"  \033[32m✅ 对话历史已压缩 ({memory_count} 条 → {new_count} 条摘要)\033[0m")
+        print(f"  \033[32m[OK] 对话历史已压缩 ({memory_count} 条 → {new_count} 条摘要)\033[0m")
         print(f"  \033[90m摘要: {summary[:100]}...\033[0m")
     except Exception as e:
-        print(f"  \033[31m❌ 压缩失败: {e}\033[0m")
+        print(f"  \033[31m[FAIL] 压缩失败: {e}\033[0m")
     print()
 
 
@@ -334,9 +334,16 @@ async def run_cli_interactive() -> None:
         # ══════════════════════════════════════════════════
         # 用户输入循环 — 每轮对话在持久系统中处理
         # ══════════════════════════════════════════════════
+        # 注意: input() 必须在线程池中执行，否则会阻塞事件循环，
+        # 导致 MemoryAgent 等后台任务无法处理消息（记忆无法存储）。
         while True:
             try:
-                user_input = input("\033[32mYou > \033[0m").strip()
+                # 使用线程池执行 input()，让事件循环在等待用户输入时保持自由
+                # 这样 MemoryAgent 可以在后台完成 LLM 摘要生成和记忆持久化
+                loop = asyncio.get_event_loop()
+                user_input = (await loop.run_in_executor(
+                    None, input, "\033[32mYou > \033[0m"
+                )).strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n再见~")
                 break
@@ -383,11 +390,11 @@ async def run_cli_interactive() -> None:
                     # 按日分组展示 (最近 7 天)
                     for date, ds in list(index.items())[:7]:
                         summary_hint = f" — {ds.daily_summary}" if ds.daily_summary else ""
-                        print(f"  \033[33m📅 {date}\033[0m ({ds.entry_count}条){summary_hint}")
+                        print(f"  \033[33m{date}\033[0m ({ds.entry_count}条){summary_hint}")
                         # 显示该日前 4 条
                         day_entries = memory_agent.store.load_day(date)
                         for entry in day_entries[:4]:
-                            role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry.role, "?")
+                            role = {"user": "用户", "assistant": "助手", "system": "[system]"}.get(entry.role, "?")
                             content = entry.content[:80] + "..." if len(entry.content) > 80 else entry.content
                             print(f"    \033[90m[{role}]\033[0m {content}")
                         if ds.entry_count > 4:
