@@ -361,13 +361,26 @@ async def run_cli_interactive() -> None:
                 print()
                 continue
 
-            # 检查图片
+            # /image — 图片输入
             image_path = None
-            if user_input.startswith("/image "):
+            if user_input.lower().startswith("/image "):
                 image_path = user_input[7:].strip()
                 user_input = input("\033[32mYou (图片说明) > \033[0m").strip()
                 if not user_input:
                     user_input = "请描述这张图片"
+
+            # ─── 拦截所有以 / 开头的未知命令，不进入 Agent 链 ───
+            if user_input.startswith("/"):
+                # 尝试模糊匹配给出建议
+                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/memory", "/image"]
+                cmd_lower = user_input.lower()
+                suggestions = [c for c in known_commands if c.startswith(cmd_lower[:3])]
+                if suggestions:
+                    print(f"  \033[33m未知命令 '{user_input}'，你是想输入 {' 或 '.join(suggestions[:3])} 吗？\033[0m")
+                else:
+                    print(f"  \033[33m未知命令 '{user_input}'，输入 /help 查看可用命令。\033[0m")
+                print()
+                continue
 
             # ─── 本轮对话 ────────────────────────────
             session_id = uuid.uuid4().hex[:12]
