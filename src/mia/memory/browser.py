@@ -30,6 +30,13 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
+# ─── 退出信号异常 — 用于穿透多层 TUI 循环 ──────────
+
+class _BrowserExit(Exception):
+    """内部信号: 用户请求退出浏览器"""
+    pass
+
+
 class MemoryBrowser:
     """3 级钻取式知识浏览器 TUI
 
@@ -91,6 +98,10 @@ class MemoryBrowser:
         # ─── TUI 模式: 3 级钻取 ─────────────────────
         try:
             await self._browse_tui()
+        except _BrowserExit:
+            pass  # 用户正常退出，静默返回
+        except KeyboardInterrupt:
+            pass  # 用户 Ctrl+C / Esc，静默返回
         except Exception as e:
             logger.warning("[MemoryBrowser] TUI 失败: {}，降级为 flat", e)
             self._use_tui = False
@@ -134,8 +145,9 @@ class MemoryBrowser:
 
         # 正常流程: 日期 → 条目 → 详情
         while True:
-            date = await self._select_date_tui(index)
-            if date is None:
+            try:
+                date = await self._select_date_tui(index)
+            except _BrowserExit:
                 break
             await self._browse_entries_tui(date)
 
@@ -177,7 +189,10 @@ class MemoryBrowser:
                 instruction="(↑↓ 移动, Enter 选择, Esc 退出)",
             ).ask_async()
         except KeyboardInterrupt:
-            return None
+            raise _BrowserExit()
+
+        if result is None:
+            raise _BrowserExit()
 
         return result
 
@@ -192,8 +207,9 @@ class MemoryBrowser:
         entry_map: dict[str, KnowledgeEntry] = {e.id: e for e in entries}
 
         while True:
-            selected_id = await self._select_entry_tui(date, entries)
-            if selected_id is None:
+            try:
+                selected_id = await self._select_entry_tui(date, entries)
+            except _BrowserExit:
                 break
             entry = entry_map.get(selected_id)
             if entry:
@@ -238,7 +254,10 @@ class MemoryBrowser:
                 instruction="(↑↓ 移动, Enter 查看详情, Esc 返回)",
             ).ask_async()
         except KeyboardInterrupt:
-            return None
+            raise _BrowserExit()
+
+        if result is None:
+            raise _BrowserExit()
 
         return result
 
