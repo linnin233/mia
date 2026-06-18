@@ -110,10 +110,13 @@ def make_user_intent(
         media_refs: 关联的媒体文件路径列表 (图片/音频)
         session_id: 会话 ID
     """
+    # 注意: target 设为 "memory_agent"，而非直接 "scheduler"
+    # MemoryAgent 会拦截 USER_INTENT，检索记忆上下文，
+    # 然后将 enriched 消息转发给 Scheduler
     return Message(
         msg_type=MessageType.USER_INTENT,
         source="receiver",
-        target="scheduler",
+        target="memory_agent",
         payload={
             "original": original,
             "intent": intent,

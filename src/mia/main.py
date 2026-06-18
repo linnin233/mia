@@ -38,6 +38,8 @@ from mia.agents.receiver import ReceiverAgent
 from mia.agents.scheduler import SchedulerAgent
 from mia.agents.sender import SenderAgent
 from mia.agents.task import TaskAgent
+from mia.agents.memory import MemoryAgent
+from mia.memory.store import MemoryStore
 
 
 def parse_args():
@@ -119,6 +121,15 @@ async def run_agent_pipeline(
         fallback_model=config.deepseek.chat_model,
     )
 
+    # MemoryAgent — 记忆检索与存储
+    memory_agent = MemoryAgent(
+        bus=bus,
+        provider=mimo,
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,
+        fallback_model=config.deepseek.chat_model,
+    )
+
     # ─── 4. 启动所有 Agent ───────────────────────────
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent\033[0m")
@@ -130,13 +141,14 @@ async def run_agent_pipeline(
 
     # 启动 Agent 的 start() 和 run() 循环
     await receiver.start()
+    await memory_agent.start()
     await scheduler.start()
     await sender.start()
     await task_agent.start()
 
     # 为每个 Agent 启动消息处理循环 (后台任务)
     tasks: list[asyncio.Task] = []
-    for agent in [receiver, scheduler, sender, task_agent]:
+    for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
         t = asyncio.create_task(agent.run())
         tasks.append(t)
 
@@ -185,6 +197,11 @@ async def run_agent_pipeline(
         if final_response is None:
             print(f"\n\033[31m[Main] 超时 ({timeout}s)，未收到回复\033[0m")
 
+        # ─── 给 MemoryAgent 时间存储记忆 ────────────
+        # Sender 同时向 "main" 和 "memory_agent" 发送 CONVERSATION_DONE
+        # 需要给 event loop 一个调度周期让 memory_agent 处理消息
+        await asyncio.sleep(0.5)
+
     except Exception as e:
         logger.error("[Main] Agent 链路异常: {}", e)
         print(f"\033[31m[Main] 错误: {e}\033[0m")
@@ -192,7 +209,7 @@ async def run_agent_pipeline(
     finally:
         # ─── 7. 清理 ──────────────────────────────────
         # 停止所有 Agent
-        for agent in [receiver, scheduler, sender, task_agent]:
+        for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
             await agent.stop()
 
         # 取消后台任务
@@ -226,19 +243,20 @@ async def run_cli_query(
         sys.exit(1)
 
 
-async def _handle_compact(scheduler: SchedulerAgent) -> None:
+async def _handle_compact(memory_agent: MemoryAgent) -> None:
     """处理 /compact 命令 — 压缩跨对话历史"""
-    if not scheduler.conversation_memory:
+    if memory_agent.store.count == 0:
         print("  \033[90m对话历史为空，无需压缩。\033[0m")
         print()
         return
 
-    memory_count = len(scheduler.conversation_memory)
+    memory_count = memory_agent.store.count
     print(f"  \033[90m正在压缩对话历史 ({memory_count} 条记录)...\033[0m")
     try:
-        await scheduler.compact_memory()
-        new_count = len(scheduler.conversation_memory)
+        summary = await memory_agent.compact()
+        new_count = memory_agent.store.count
         print(f"  \033[32m✅ 对话历史已压缩 ({memory_count} 条 → {new_count} 条摘要)\033[0m")
+        print(f"  \033[90m摘要: {summary[:100]}...\033[0m")
     except Exception as e:
         print(f"  \033[31m❌ 压缩失败: {e}\033[0m")
     print()
@@ -282,24 +300,32 @@ async def run_cli_interactive() -> None:
         fallback_provider=deepseek,
         fallback_model=config.deepseek.chat_model,
     )
+    memory_agent = MemoryAgent(
+        bus=bus,
+        provider=mimo,
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,
+        fallback_model=config.deepseek.chat_model,
+    )
 
     # 启动所有 Agent
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent (持久模式)\033[0m")
     print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
     print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
-    print(f"  记忆: 最多 {scheduler._max_memory_turns} 轮对话")
+    print(f"  记忆: MemoryAgent @ {memory_agent.store.file_path}")
     print(f"\033[1m{'='*50}\033[0m")
     print()
 
     await receiver.start()
+    await memory_agent.start()
     await scheduler.start()
     await sender.start()
     await task_agent.start()
 
     # 后台消息处理循环 (持久运行)
     tasks: list[asyncio.Task] = []
-    for agent in [receiver, scheduler, sender, task_agent]:
+    for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
         tasks.append(asyncio.create_task(agent.run()))
 
     await asyncio.sleep(0.3)
@@ -343,21 +369,22 @@ async def run_cli_interactive() -> None:
 
             # /compact — 压缩对话历史
             if user_input.lower() == "/compact":
-                await _handle_compact(scheduler)
+                await _handle_compact(memory_agent)
                 continue
 
             # /memory — 显示记忆状态
             if user_input.lower() == "/memory":
-                mem = scheduler.conversation_memory
-                if not mem:
+                entries = memory_agent.store.get_all()
+                if not entries:
                     print("  \033[90m对话记忆为空。\033[0m")
                 else:
-                    print(f"  \033[90m对话记忆: {len(mem)} 条记录 (最近 {scheduler._max_memory_turns} 轮)\033[0m")
-                    # 显示最近 3 条
-                    for entry in mem[-6:]:
-                        role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry["role"], "?")
-                        content = entry["content"][:80] + "..." if len(entry["content"]) > 80 else entry["content"]
-                        print(f"    \033[90m[{role}]\033[0m {content}")
+                    print(f"  \033[90m对话记忆: {len(entries)} 条记录\033[0m")
+                    # 显示最近 6 条
+                    for entry in entries[-6:]:
+                        role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry.role, "?")
+                        content = entry.content[:80] + "..." if len(entry.content) > 80 else entry.content
+                        summary_hint = f" [{entry.summary[:40]}]" if entry.summary else ""
+                        print(f"    \033[90m[{role}]\033[0m{summary_hint} {content}")
                 print()
                 continue
 
@@ -437,7 +464,7 @@ async def run_cli_interactive() -> None:
     finally:
         # ─── 清理 — 退出时执行一次 ─────────────────
         print("\n\033[90m正在关闭 Agent 系统...\033[0m")
-        for agent in [receiver, scheduler, sender, task_agent]:
+        for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
             await agent.stop()
         for t in tasks:
             t.cancel()

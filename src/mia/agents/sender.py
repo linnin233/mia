@@ -70,6 +70,15 @@ class SenderAgent(BaseAgent):
             session_id=msg.session_id,
         ))
 
+        # 同时通知 MemoryAgent 存储本轮对话
+        await self.bus.publish(Message(
+            msg_type=MessageType.CONVERSATION_DONE,
+            source=self.name,
+            target="memory_agent",
+            payload={"message": message},
+            session_id=msg.session_id,
+        ))
+
     async def _handle_send_voice(self, msg: Message) -> None:
         """处理语音发送指令"""
         message = msg.payload.get("message", "")

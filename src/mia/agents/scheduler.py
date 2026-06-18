@@ -158,12 +158,6 @@ class SchedulerAgent(BaseAgent):
         self._consecutive_tasks: int = 0
         self._task_history: list[str] = []  # 已执行的任务描述
         self._decision_history: list[dict] = []  # 当前会话的历史决策
-        self._current_user_intent: str = ""  # 当前用户意图 (用于记忆存储)
-
-        # 跨对话记忆 (持久化，不复位)
-        # 格式: [{"role": "user"|"assistant"|"system", "content": "..."}, ...]
-        self._conversation_memory: list[dict] = []
-        self._max_memory_turns: int = 20  # 最多保留 20 轮对话
 
     # ─── 生命周期 ────────────────────────────────────────
 
@@ -194,8 +188,6 @@ class SchedulerAgent(BaseAgent):
         self._consecutive_tasks = 0
         self._task_history.clear()
         self._decision_history.clear()
-        # 保存当前用户意图，用于对话记忆
-        self._current_user_intent = msg.payload.get("intent", "")
 
         logger.info("[Scheduler] 收到用户意图: {}", msg.payload.get("intent", ""))
 
@@ -329,24 +321,20 @@ class SchedulerAgent(BaseAgent):
         await self._execute_decision(decision, trigger_msg)
 
     def _build_context(self, trigger_msg: Message) -> list[dict]:
-        """构建 LLM 上下文消息列表 (包含跨对话记忆)"""
+        """构建 LLM 上下文消息列表 (包含由 MemoryAgent 注入的记忆上下文)"""
         messages = [
             {"role": "system", "content": SCHEDULER_SYSTEM_PROMPT},
         ]
 
-        # ─── 注入跨对话记忆 ───────────────────────────
-        if self._conversation_memory:
-            memory_block = "## 之前的对话记录 (跨对话上下文，请结合历史回答问题)\n"
-            # 取最近的记忆，最多 _max_memory_turns 轮 (每轮 = user + assistant)
-            recent_memory = self._conversation_memory[-(self._max_memory_turns * 2):]
-            for entry in recent_memory:
-                role_label = {
-                    "user": "用户",
-                    "assistant": "助手",
-                    "system": "系统",
-                }.get(entry["role"], entry["role"])
-                memory_block += f"{role_label}: {entry['content']}\n"
-            messages.append({"role": "user", "content": memory_block})
+        # ─── 注入 MemoryAgent 提供的记忆上下文 ──────────
+        # MemoryAgent 已经在 USER_INTENT payload 中注入了 memory_context 字段
+        # 这是经过检索+总结的精炼记忆，直接注入到 LLM context 最前面
+        memory_context = trigger_msg.payload.get("memory_context", "")
+        if memory_context:
+            messages.append({
+                "role": "user",
+                "content": f"## 跨对话记忆上下文 (来自 MemoryAgent)\n{memory_context}",
+            })
             messages.append({
                 "role": "assistant",
                 "content": "已了解之前的对话历史，我会基于这些上下文理解用户的指代和新问题。",
@@ -396,26 +384,6 @@ class SchedulerAgent(BaseAgent):
             self._consecutive_tasks = 0  # 重置连续任务计数
             message = detail.get("message", "")
             use_voice = detail.get("use_voice", False)
-
-            # ─── 存储到跨对话记忆 ────────────────────
-            if self._current_user_intent and message:
-                self._conversation_memory.append({
-                    "role": "user",
-                    "content": self._current_user_intent,
-                })
-                self._conversation_memory.append({
-                    "role": "assistant",
-                    "content": message,
-                })
-                # 裁剪过长的记忆 (保留最近 _max_memory_turns 轮)
-                max_entries = self._max_memory_turns * 2
-                if len(self._conversation_memory) > max_entries:
-                    self._conversation_memory = self._conversation_memory[-max_entries:]
-                self._current_user_intent = ""  # 清空，防止下次误存
-                logger.debug(
-                    "[Scheduler] 记忆已更新: {} 条",
-                    len(self._conversation_memory),
-                )
 
             self._print_thought(f"决策: 回复用户", message)
 
@@ -519,87 +487,9 @@ class SchedulerAgent(BaseAgent):
             session_id=self._session_id,
         ))
 
-    # ─── 跨对话记忆 ─────────────────────────────────
-
-    @property
-    def conversation_memory(self) -> list[dict]:
-        """跨对话记忆列表 (只读)"""
-        return self._conversation_memory
-
-    async def compact_memory(self) -> None:
-        """压缩对话历史 — 调用 LLM 将多轮对话总结为一段摘要
-
-        用 LLM 将 _conversation_memory 中的完整对话记录压缩为一条系统消息，
-        保留关键信息（人名、地名、数字、重要结论、用户偏好等），
-        丢弃冗余的闲聊和细节。
-
-        Raises:
-            RuntimeError: LLM 调用失败时抛出
-        """
-        if not self._conversation_memory:
-            return
-
-        # 构建记忆文本
-        memory_text_parts = []
-        for entry in self._conversation_memory:
-            role_label = {
-                "user": "用户",
-                "assistant": "助手",
-                "system": "系统",
-            }.get(entry["role"], entry["role"])
-            memory_text_parts.append(f"{role_label}: {entry['content']}")
-        memory_text = "\n".join(memory_text_parts)
-        original_count = len(self._conversation_memory)
-
-        # 压缩 prompt
-        compress_prompt = (
-            "将以下对话历史压缩为一段简短摘要（300字以内），"
-            "保留关键信息：人名、地名、数字、重要结论、用户偏好、未完成任务等。"
-            "丢弃不必要的闲聊细节。\n\n"
-            f"{memory_text}\n\n"
-            "请直接输出摘要文本，不要加任何前缀、标签或解释。"
-        )
-
-        messages = [{"role": "user", "content": compress_prompt}]
-
-        # 尝试主 Provider
-        summary = None
-        try:
-            summary = await self.provider.chat_sync(
-                messages=messages,
-                model=self.model,
-                max_tokens=512,
-                temperature=0.3,
-            )
-        except Exception as e:
-            logger.warning("[Scheduler] 压缩记忆 主Provider失败: {}", e)
-
-        # 备选 Provider
-        if not summary and self.fallback_provider:
-            try:
-                summary = await self.fallback_provider.chat_sync(
-                    messages=messages,
-                    model=self.fallback_model,
-                    max_tokens=512,
-                    temperature=0.3,
-                )
-            except Exception as e:
-                logger.error("[Scheduler] 压缩记忆 备选Provider也失败: {}", e)
-
-        if not summary:
-            raise RuntimeError("压缩对话历史失败: 主备 Provider 均不可用")
-
-        # 替换记忆为一条系统摘要
-        self._conversation_memory = [{
-            "role": "system",
-            "content": (
-                f"[对话历史摘要 | {original_count} 条记录已压缩] {summary.strip()}"
-            ),
-        }]
-        logger.info(
-            "[Scheduler] 对话历史已压缩: {} 条 → 1 条摘要",
-            original_count,
-        )
+    # ─── 跨对话记忆已迁至 MemoryAgent ──────────────
+    # conversation_memory 和 compact_memory() 现在由 MemoryAgent 管理
+    # SchedulerAgent 通过 payload["memory_context"] 消费记忆上下文
 
     @staticmethod
     def _print_thought(title: str, detail: str) -> None:
