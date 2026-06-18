@@ -1,11 +1,12 @@
 """
-Test MemoryBrowser — 交互式 TUI 记忆浏览器
+Test MemoryBrowser — 交互式 TUI 知识浏览器
 
 测试目标:
-  1. 空记忆库 — browse() 立即返回不报错
-  2. 单日单条 — 跳过日期选择，直接进条目
+  1. 空知识库 — browse() 立即返回不报错
+  2. 单日 — 跳过日期选择，直接进条目
   3. Flat 降级模式 — 无 questionary 时正常降级
   4. 边界 — 某天无记录时处理
+  5. 只读验证 — browse() 不修改 store 数据
 """
 
 import asyncio
@@ -19,7 +20,13 @@ _project_root = Path(__file__).parent.parent
 if str(_project_root / "src") not in sys.path:
     sys.path.insert(0, str(_project_root / "src"))
 
-from mia.memory.store import MemoryStore, MemoryEntry, DaySummary
+from mia.memory.store import (
+    KnowledgeEntry,
+    MemoryStore,
+    DaySummary,
+    CATEGORY_FACT,
+    CATEGORY_PREFERENCE,
+)
 from mia.memory.browser import MemoryBrowser
 
 
@@ -27,8 +34,8 @@ from mia.memory.browser import MemoryBrowser
 # 辅助: 构造测试用的 MemoryStore
 # ═══════════════════════════════════════════════════════════
 
-def _make_store(data_dir: Path, entries: list[MemoryEntry]) -> MemoryStore:
-    """构造 MemoryStore 并预填入指定条目"""
+def _make_store(data_dir: Path, entries: list[KnowledgeEntry]) -> MemoryStore:
+    """构造 MemoryStore 并预填入指定知识条目"""
     store = MemoryStore(data_dir=data_dir)
     store.load()
     for entry in entries:
@@ -37,11 +44,11 @@ def _make_store(data_dir: Path, entries: list[MemoryEntry]) -> MemoryStore:
 
 
 # ═══════════════════════════════════════════════════════════
-# 测试 1: 空记忆库
+# 测试 1: 空知识库
 # ═══════════════════════════════════════════════════════════
 
 async def test_browse_empty_store():
-    """空记忆库 — browse() 应该立即返回不报错"""
+    """空知识库 — browse() 应该立即返回不报错"""
     tmpdir = Path(tempfile.mkdtemp(prefix="mia_browser_test_"))
     try:
         store = MemoryStore(data_dir=tmpdir)
@@ -49,45 +56,43 @@ async def test_browse_empty_store():
         assert store.count == 0
 
         browser = MemoryBrowser(store)
-        # browse() 不应抛异常
         await browser.browse()
 
-        print("  ✅ test_browse_empty_store 通过")
+        print("  [OK] test_browse_empty_store 通过")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ═══════════════════════════════════════════════════════════
-# 测试 2: 单日单条 (边界 — 自动跳过日期选择)
+# 测试 2: 单日 (边界 — 自动跳过日期选择)
 # ═══════════════════════════════════════════════════════════
 
 async def test_browse_single_day():
     """只有 1 天时，跳过 Level 1 日期选择"""
     tmpdir = Path(tempfile.mkdtemp(prefix="mia_browser_test_"))
     try:
-        entry = MemoryEntry(
-            role="user",
-            content="嘉兴今天天气怎么样",
-            summary="用户查询嘉兴天气",
-            keywords=["嘉兴", "天气"],
+        entry = KnowledgeEntry(
+            content="用户偏好使用中文进行技术交流",
+            category=CATEGORY_PREFERENCE,
+            confidence=0.8,
+            keywords=["中文", "偏好", "技术交流"],
             importance=0.7,
-            session_id="test_s1",
+            source_sessions=["test_s1"],
         )
         store = _make_store(tmpdir, [entry])
         assert store.day_count == 1
         assert store.count == 1
 
         browser = MemoryBrowser(store)
-        # browse() 不应该抛异常
         await browser.browse()
 
-        print("  ✅ test_browse_single_day 通过")
+        print("  [OK] test_browse_single_day 通过")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ═══════════════════════════════════════════════════════════
-# 测试 3: Flat 模式降级 (无 questionary 或终端不支持)
+# 测试 3: Flat 模式降级
 # ═══════════════════════════════════════════════════════════
 
 async def test_browse_flat_mode():
@@ -95,13 +100,13 @@ async def test_browse_flat_mode():
     tmpdir = Path(tempfile.mkdtemp(prefix="mia_browser_test_"))
     try:
         entries = [
-            MemoryEntry(
-                role="user",
-                content=f"测试问题 {i}",
-                summary=f"测试摘要 {i}",
+            KnowledgeEntry(
+                content=f"测试知识 {i}",
+                category=CATEGORY_FACT,
+                confidence=0.5 + i * 0.1,
                 keywords=["test"],
                 importance=0.5,
-                session_id=f"s{i}",
+                source_sessions=[f"s{i}"],
             )
             for i in range(3)
         ]
@@ -109,11 +114,10 @@ async def test_browse_flat_mode():
         assert store.count == 3
 
         browser = MemoryBrowser(store)
-        # 强制 flat 模式
         browser._use_tui = False
         await browser.browse()
 
-        print("  ✅ test_browse_flat_mode 通过")
+        print("  [OK] test_browse_flat_mode 通过")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -133,10 +137,11 @@ async def test_date_without_file():
         store._index["2026-01-15"] = DaySummary(
             date="2026-01-15",
             file="daily/2026-01-15.json",
-            entry_count=5,
+            entry_count=3,
             daily_summary="测试日期",
             keywords=["test"],
             importance=0.8,
+            category_distribution={"fact": 2, "preference": 1},
         )
         store._save_index()
 
@@ -149,7 +154,7 @@ async def test_date_without_file():
         browser._use_tui = False
         await browser.browse()
 
-        print("  ✅ test_date_without_file 通过")
+        print("  [OK] test_date_without_file 通过")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -163,13 +168,15 @@ async def test_browser_is_readonly():
     tmpdir = Path(tempfile.mkdtemp(prefix="mia_browser_test_"))
     try:
         entries = [
-            MemoryEntry(
-                role="user", content="问题1", summary="摘要1",
-                keywords=["k1"], importance=0.5, session_id="s1",
+            KnowledgeEntry(
+                content="知识 1", category=CATEGORY_FACT,
+                confidence=0.8, keywords=["k1"], importance=0.5,
+                source_sessions=["s1"],
             ),
-            MemoryEntry(
-                role="assistant", content="答案1", summary="摘要2",
-                keywords=["k2"], importance=0.5, session_id="s1",
+            KnowledgeEntry(
+                content="知识 2", category=CATEGORY_PREFERENCE,
+                confidence=0.9, keywords=["k2"], importance=0.5,
+                source_sessions=["s1"],
             ),
         ]
         store = _make_store(tmpdir, entries)
@@ -189,10 +196,10 @@ async def test_browser_is_readonly():
         # 验证条目内容不变
         all_entries = store.get_all()
         contents = {e.content for e in all_entries}
-        assert "问题1" in contents
-        assert "答案1" in contents
+        assert "知识 1" in contents
+        assert "知识 2" in contents
 
-        print("  ✅ test_browser_is_readonly 通过")
+        print("  [OK] test_browser_is_readonly 通过")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -203,11 +210,11 @@ async def test_browser_is_readonly():
 
 async def main():
     print("=" * 60)
-    print("MemoryBrowser TUI 测试")
+    print("MemoryBrowser 知识浏览器测试")
     print("=" * 60)
 
     tests = [
-        ("空记忆库不报错", test_browse_empty_store),
+        ("空知识库不报错", test_browse_empty_store),
         ("单日跳过日期选择", test_browse_single_day),
         ("Flat 降级模式", test_browse_flat_mode),
         ("日期无文件边界", test_date_without_file),
@@ -226,7 +233,7 @@ async def main():
             failed += 1
             import traceback
             traceback.print_exc()
-            print(f"  ❌ FAIL: {e}")
+            print(f"  [FAIL] FAIL: {e}")
 
     print()
     print("=" * 60)

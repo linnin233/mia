@@ -1,19 +1,23 @@
 """
-MemoryStore — 分级记忆存储 (Index + Daily Shards)
+MemoryStore — 分级知识存储 (Index + Daily Shards)
 
 两级存储架构:
   Level 1 — index.json: 始终加载，记录每天的摘要，用于快速扫描定位
-  Level 2 — daily/YYYY-MM-DD.json: 按需懒加载，存储当日详细 MemoryEntry
+  Level 2 — daily/YYYY-MM-DD.json: 按需懒加载，存储当日 KnowledgeEntry
 
 设计参考:
-  - ReMeLight 的文件分级思想 (MEMORY.md + memory/*.md)
-  - 日志轮转模式 (按日分片，自动压缩旧日)
+  - linninpaw 的分层记忆 (原始日志 → 精选记忆 → 梦境优化)
+  - ReMeLight 的文件分级思想
+
+KnowledgeEntry vs 旧 MemoryEntry:
+  - 旧: 存储原始消息 (user/assistant role + content)
+  - 新: 存储提炼后的知识 (category + content, 无 role)
+  - 知识不区分"谁说"，只记录"知道什么"
 
 优势:
   - index.json 始终很小 (~1-2 KB, <= 90 条记录)
   - 检索时只加载相关日期的 daily 文件
   - 换日自动生成日摘要，旧日自动压缩
-  - 向后兼容旧单文件格式 (自动迁移)
 """
 
 import json
@@ -53,64 +57,125 @@ def _date_from_timestamp(ts: str) -> str:
     """
     if not ts:
         return _today_str()
-    # 取前 10 个字符 (YYYY-MM-DD)
     match = re.match(r'(\d{4}-\d{2}-\d{2})', ts)
     if match:
         return match.group(1)
     return _today_str()
 
 
-# ─── MemoryEntry (保持不变) ──────────────────────
+# ─── 知识类别常量 ──────────────────────────────────
+
+CATEGORY_FACT = "fact"             # 客观事实
+CATEGORY_PREFERENCE = "preference"  # 用户偏好
+CATEGORY_DECISION = "decision"      # 已做决策
+CATEGORY_TASK = "task"             # 待办/任务
+CATEGORY_INSIGHT = "insight"        # 洞察/发现
+
+VALID_CATEGORIES = {
+    CATEGORY_FACT,
+    CATEGORY_PREFERENCE,
+    CATEGORY_DECISION,
+    CATEGORY_TASK,
+    CATEGORY_INSIGHT,
+}
+
+# 类别中文标签 (用于展示)
+CATEGORY_LABELS = {
+    CATEGORY_FACT: "[事实]",
+    CATEGORY_PREFERENCE: "[偏好]",
+    CATEGORY_DECISION: "[决策]",
+    CATEGORY_TASK: "[任务]",
+    CATEGORY_INSIGHT: "[洞察]",
+}
+
+
+# ─── KnowledgeEntry — 知识条目 ────────────────────
 
 @dataclass
-class MemoryEntry:
-    """单条记忆 — 8 个字段保持不变
+class KnowledgeEntry:
+    """一条从对话中提炼的原子知识
 
-    设计参考 ReMe MemoryNode 的 when_to_use/content 分离模式:
-      - summary → 用于检索匹配 (类似 when_to_use)
-      - content → 原始对话内容
+    与旧 MemoryEntry 的核心区别:
+      - 不区分 speaker (知识不记录"谁说"，只记录"知道什么")
+      - content 是提炼后的知识陈述，不是原始消息
+      - category 标记知识类型 (fact/preference/decision/task/insight)
+      - confidence 表达确定性，随验证次数提升
+      - source_sessions 保留溯源能力
+
+    旧 MemoryEntry 字段对照:
+      - role → 移除 (知识没有发言人)
+      - summary → 移除 (content 本身就是总结)
+      - session_id → 改为 source_sessions (支持跨会话合并)
     """
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    role: str = ""            # "user" | "assistant" | "system"
-    content: str = ""         # 原始对话内容
-    summary: str = ""         # 一句话摘要 (用于检索匹配)
+    content: str = ""             # 提炼后的知识陈述
+    category: str = CATEGORY_FACT  # 知识类别
+    confidence: float = 0.5       # 置信度 0.0-1.0
     keywords: list[str] = field(default_factory=list)
-    importance: float = 0.5
-    timestamp: str = ""       # ISO 格式，空则自动填充当前北京时间
-    session_id: str = ""
+    importance: float = 0.5       # 重要度 0.0-1.0
+    source_sessions: list[str] = field(default_factory=list)  # 来源会话 ID
+    created_at: str = ""          # 首次创建时间 ISO
+    updated_at: str = ""          # 最后更新时间 ISO
 
     def __post_init__(self):
-        if not self.timestamp:
-            self.timestamp = _now_beijing()
+        now = _now_beijing()
+        if not self.created_at:
+            self.created_at = now
+        if not self.updated_at:
+            self.updated_at = now
+        # 标准化 category
+        if self.category not in VALID_CATEGORIES:
+            logger.debug(
+                "[KnowledgeEntry] 未知 category '{}', 降级为 '{}'",
+                self.category, CATEGORY_FACT,
+            )
+            self.category = CATEGORY_FACT
 
     def to_dict(self) -> dict:
         """序列化为纯 dict"""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MemoryEntry":
+    def from_dict(cls, data: dict) -> "KnowledgeEntry":
         """从 dict 反序列化 — 过滤多余字段保证兼容性"""
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)
 
+    @classmethod
+    def is_legacy_format(cls, data: dict) -> bool:
+        """检测是否为旧 MemoryEntry 格式 (有 'role' 字段)"""
+        return "role" in data
 
-# ─── DaySummary (新增 — 索引条目) ──────────────
+    @property
+    def category_label(self) -> str:
+        """类别中文标签"""
+        return CATEGORY_LABELS.get(self.category, f"[{self.category}]")
+
+    @property
+    def date(self) -> str:
+        """从 created_at 提取日期"""
+        return _date_from_timestamp(self.created_at)
+
+
+# ─── DaySummary — 日索引条目 ──────────────────────
 
 @dataclass
 class DaySummary:
-    """索引中每日记忆的摘要记录
+    """索引中每日知识的摘要记录
 
-    始终在内存中 (~100 bytes/天)，用于快速扫描定位。
+    始终在内存中 (~150 bytes/天)，用于快速扫描定位。
     """
 
     date: str = ""                   # "2026-06-19"
     file: str = ""                   # "daily/2026-06-19.json"
-    entry_count: int = 0             # 当日记忆条目数
-    daily_summary: str = ""          # 当日对话的一句话总结 (LLM 生成)
+    entry_count: int = 0             # 当日知识条目数
+    daily_summary: str = ""          # 当日知识的一句话总结 (LLM 生成)
     keywords: list[str] = field(default_factory=list)   # 当日关键词聚合
     importance: float = 0.5          # 当日最高重要性
+    # 类别分布 (用于快速了解当天知识构成)
+    category_distribution: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +184,7 @@ class DaySummary:
             "daily_summary": self.daily_summary,
             "keywords": self.keywords,
             "importance": self.importance,
+            "category_distribution": self.category_distribution,
         }
 
     @classmethod
@@ -130,22 +196,23 @@ class DaySummary:
             daily_summary=data.get("daily_summary", ""),
             keywords=data.get("keywords", []),
             importance=data.get("importance", 0.5),
+            category_distribution=data.get("category_distribution", {}),
         )
 
     @property
     def has_summary(self) -> bool:
-        """是否已生成日摘要 (未生成则需要 LLM 补充)"""
+        """是否已生成日摘要"""
         return bool(self.daily_summary)
 
 
-# ─── MemoryStore — 分级存储 ────────────────────
+# ─── MemoryStore — 分级知识存储 ──────────────────
 
 class MemoryStore:
-    """分级记忆存储 — Index + Daily Shards
+    """分级知识存储 — Index + Daily Shards
 
     两级架构:
-      - index.json: 始终加载，每天一条摘要记录
-      - daily/YYYY-MM-DD.json: 按需懒加载，存储当日详细条目
+      - index.json: 始终加载，每天一条 DaySummary
+      - daily/YYYY-MM-DD.json: 按需懒加载，存储当日 KnowledgeEntry
 
     使用方式:
       store = MemoryStore()
@@ -153,8 +220,6 @@ class MemoryStore:
       store.add(entry)                     # 路由到今日 daily 文件
       dates = store.scan_index(keywords)   # 扫索引定位相关日期
       entries = store.load_day(dates[0])   # 按需加载
-
-    向后兼容: 自动检测旧 memory.json 并迁移
     """
 
     # ─── 常量 ─────────────────────────────────────
@@ -171,8 +236,6 @@ class MemoryStore:
             max_daily_files: 最多保留的日文件数
         """
         if data_dir is None:
-            # 从 store.py 位置推导项目根目录:
-            # mia/src/mia/memory/store.py → 上 4 级 → mia/
             _project_root = Path(__file__).parent.parent.parent.parent
             data_dir = _project_root / "data" / "memory"
 
@@ -183,16 +246,11 @@ class MemoryStore:
 
         # ─── 运行时状态 ──────────────────────────
 
-        # 始终在内存: 索引 (date → DaySummary)
         self._index: dict[str, DaySummary] = {}
-
-        # 按需缓存: 日文件条目 (date → [MemoryEntry])
-        self._cache: dict[str, list[MemoryEntry]] = {}
-
-        # 当日文件是否已修改 (用于延迟写入)
+        self._cache: dict[str, list[KnowledgeEntry]] = {}
         self._dirty_days: set[str] = set()
 
-        # 旧格式迁移路径
+        # 旧格式路径
         self._legacy_path = self._data_dir / "memory.json"
 
         logger.info(
@@ -204,7 +262,7 @@ class MemoryStore:
 
     @property
     def count(self) -> int:
-        """总记忆条目数 (从 index 汇总)"""
+        """总知识条目数 (从 index 汇总)"""
         return sum(ds.entry_count for ds in self._index.values())
 
     @property
@@ -224,15 +282,15 @@ class MemoryStore:
     def load(self) -> None:
         """加载记忆系统 — 只加载 index.json (极快)
 
-        首次调用会自动检测并迁移旧格式。
+        首次调用会自动检测旧格式并清理。
         """
-        # 确保目录存在
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
-        # 检查是否需要迁移
-        if self._maybe_migrate():
-            logger.info("[MemoryStore] 旧格式迁移完成")
-            return  # 迁移后 index 已在内存中
+        # 检查并清理旧 MemoryEntry 格式
+        if self._maybe_clean_legacy():
+            logger.info("[MemoryStore] 旧格式数据已清理")
+            self._index = {}
+            return
 
         # 加载 index.json
         if not self._index_path.exists():
@@ -248,7 +306,7 @@ class MemoryStore:
                 self._index[date_str] = DaySummary.from_dict(date_str, day_data)
 
             logger.info(
-                "[MemoryStore] 已加载索引: {} 天, {} 条记忆",
+                "[MemoryStore] 已加载索引: {} 天, {} 条知识",
                 len(self._index),
                 self.count,
             )
@@ -260,20 +318,20 @@ class MemoryStore:
     # 公开 API — 写入
     # ═══════════════════════════════════════════════════════
 
-    def add(self, entry: MemoryEntry) -> None:
-        """添加一条记忆 — 自动路由到对应日期的 daily 文件
+    def add(self, entry: KnowledgeEntry) -> None:
+        """添加一条知识 — 自动路由到对应日期的 daily 文件
 
         流程:
-          1. 确定 entry 所属日期 (从 timestamp 提取)
+          1. 确定 entry 所属日期 (从 created_at 提取)
           2. 加载/创建该日文件
           3. 追加 entry
-          4. 更新 index 中该日的计数和关键词
+          4. 更新 index 中该日的计数、关键词、类别分布
           5. 保存日文件 + 索引
 
         Args:
-            entry: 要添加的记忆条目
+            entry: 要添加的知识条目
         """
-        date = _date_from_timestamp(entry.timestamp)
+        date = entry.date
 
         # 加载该日文件 (从缓存或磁盘)
         day_entries = self._load_day_entries(date)
@@ -296,6 +354,9 @@ class MemoryStore:
                     all_kw.append(kw)
             ds.keywords = all_kw[:20]
             ds.importance = max(ds.importance, entry.importance)
+            # 更新类别分布
+            cat = entry.category
+            ds.category_distribution[cat] = ds.category_distribution.get(cat, 0) + 1
         else:
             self._index[date] = DaySummary(
                 date=date,
@@ -304,6 +365,7 @@ class MemoryStore:
                 daily_summary="",
                 keywords=list(entry.keywords),
                 importance=entry.importance,
+                category_distribution={entry.category: 1},
             )
 
         # 持久化
@@ -322,16 +384,16 @@ class MemoryStore:
             self._auto_compact()
 
         logger.debug(
-            "[MemoryStore] 已添加: date={}, role={}, total={}",
-            date, entry.role, self.count,
+            "[MemoryStore] 已添加: date={}, category={}, total={}",
+            date, entry.category, self.count,
         )
 
     # ═══════════════════════════════════════════════════════
     # 公开 API — 读取
     # ═══════════════════════════════════════════════════════
 
-    def get_all(self) -> list[MemoryEntry]:
-        """获取所有记忆条目 — 遍历加载所有 daily 文件
+    def get_all(self) -> list[KnowledgeEntry]:
+        """获取所有知识条目 — 遍历加载所有 daily 文件
 
         注意: 此操作可能较慢，仅用于 compact 等管理操作。
         日常检索请用 scan_index() + load_day() 两阶段检索。
@@ -342,7 +404,7 @@ class MemoryStore:
             all_entries.extend(day_entries)
         return all_entries
 
-    def get_by_keywords(self, keywords: list[str]) -> list[MemoryEntry]:
+    def get_by_keywords(self, keywords: list[str]) -> list[KnowledgeEntry]:
         """关键词检索 — 先扫索引再加载相关日文件
 
         两阶段检索:
@@ -353,7 +415,7 @@ class MemoryStore:
             keywords: 关键词列表
 
         Returns:
-            匹配的记忆条目 (按相关性排序)
+            匹配的知识条目 (按相关性排序)
         """
         if not keywords or not self._index:
             return []
@@ -376,7 +438,6 @@ class MemoryStore:
         for entry in candidates:
             searchable = (
                 " ".join(entry.keywords) + " " +
-                entry.summary + " " +
                 entry.content
             ).lower()
             overlap = sum(1 for kw in keywords if kw.lower() in searchable)
@@ -387,14 +448,14 @@ class MemoryStore:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [entry for _, entry in scored]
 
-    def get_recent(self, n: int = 10) -> list[MemoryEntry]:
-        """获取最近 N 条记忆 — 从最近几天加载
+    def get_recent(self, n: int = 10) -> list[KnowledgeEntry]:
+        """获取最近 N 条知识 — 从最近几天加载
 
         Args:
             n: 返回条数
 
         Returns:
-            最近的记忆条目列表 (按时间降序)
+            最近的知识条目列表 (按创建时间降序)
         """
         if not self._index:
             return []
@@ -404,8 +465,8 @@ class MemoryStore:
         for date in recent_dates:
             all_recent.extend(self._load_day_entries(date))
 
-        # 按 timestamp 降序排列
-        all_recent.sort(key=lambda e: e.timestamp, reverse=True)
+        # 按 created_at 降序排列
+        all_recent.sort(key=lambda e: e.created_at, reverse=True)
         return all_recent[:n]
 
     # ═══════════════════════════════════════════════════════
@@ -413,10 +474,10 @@ class MemoryStore:
     # ═══════════════════════════════════════════════════════
 
     def delete(self, entry_id: str) -> bool:
-        """删除一条记忆 — 遍历所有日文件查找并删除
+        """删除一条知识 — 遍历所有日文件查找并删除
 
         Args:
-            entry_id: 要删除的记忆 ID
+            entry_id: 要删除的知识 ID
 
         Returns:
             True 如果成功删除
@@ -448,7 +509,7 @@ class MemoryStore:
         return False
 
     def clear(self) -> None:
-        """清空所有记忆 — 删除 index + 所有 daily 文件"""
+        """清空所有知识 — 删除 index + 所有 daily 文件"""
         # 删除所有 daily 文件
         if self._daily_dir.exists():
             for f in self._daily_dir.iterdir():
@@ -465,41 +526,41 @@ class MemoryStore:
         self._cache.clear()
         self._dirty_days.clear()
 
-        logger.info("[MemoryStore] 记忆已清空")
+        logger.info("[MemoryStore] 知识已清空")
 
     def compact(self, summary_text: str, source_session_ids: Optional[list[str]] = None) -> None:
-        """压缩对话历史 — 用摘要替换指定会话的记忆
+        """压缩知识 — 用摘要替换指定会话的知识条目
 
         如果指定 session_ids，删除那些会话的条目，替换为一条 system 摘要。
-        否则压缩所有记忆。
+        否则压缩所有知识。
 
         Args:
             summary_text: 压缩后的摘要文本
             source_session_ids: 要压缩的会话 ID 列表 (None = 全部)
         """
         if source_session_ids:
-            # 只压缩指定会话
             target_ids = set(source_session_ids)
             for date in list(self._index.keys()):
                 entries = self._load_day_entries(date)
-                remaining = [e for e in entries if e.session_id not in target_ids]
+                remaining = [
+                    e for e in entries
+                    if not set(e.source_sessions) & target_ids
+                ]
                 if len(remaining) != len(entries):
                     self._cache[date] = remaining
                     self._dirty_days.add(date)
                     self._index[date].entry_count = len(remaining)
                     self._save_daily(date)
         else:
-            # 全量压缩: 清空所有日文件
             self.clear()
 
         # 创建压缩摘要条目，存入今天
-        compact_entry = MemoryEntry(
-            role="system",
+        compact_entry = KnowledgeEntry(
             content=summary_text,
-            summary="对话历史压缩摘要",
+            category=CATEGORY_INSIGHT,
             keywords=["摘要"],
             importance=1.0,
-            session_id="__compact__",
+            source_sessions=source_session_ids or [],
         )
         self.add(compact_entry)
 
@@ -509,7 +570,7 @@ class MemoryStore:
         )
 
     # ═══════════════════════════════════════════════════════
-    # 公开 API — 新增 (两阶段检索)
+    # 公开 API — 两阶段检索
     # ═══════════════════════════════════════════════════════
 
     def scan_index(self, keywords: list[str], limit: int = 7) -> list[str]:
@@ -533,7 +594,6 @@ class MemoryStore:
             searchable = f"{ds.daily_summary} {' '.join(ds.keywords)}".lower()
             overlap = sum(1 for kw in keywords if kw.lower() in searchable)
             if overlap > 0:
-                # 评分: 关键词重叠 + 重要性 + 条目数因子
                 score = overlap * 2.0 + ds.importance + min(ds.entry_count / 10, 0.5)
                 scored.append((score, date))
 
@@ -546,8 +606,8 @@ class MemoryStore:
         )
         return result
 
-    def load_day(self, date: str) -> list[MemoryEntry]:
-        """加载指定日期的所有记忆条目
+    def load_day(self, date: str) -> list[KnowledgeEntry]:
+        """加载指定日期的所有知识条目
 
         优先从缓存读取，缓存未命中则从磁盘加载。
 
@@ -555,12 +615,12 @@ class MemoryStore:
             date: 日期字符串 "YYYY-MM-DD"
 
         Returns:
-            该日的 MemoryEntry 列表
+            该日的 KnowledgeEntry 列表
         """
         return self._load_day_entries(date)
 
     def get_recent_dates(self, n: int = 3) -> list[str]:
-        """获取最近 N 个有记忆的日期
+        """获取最近 N 个有知识的日期
 
         Args:
             n: 返回日期数
@@ -582,7 +642,7 @@ class MemoryStore:
         return dict(sorted(self._index.items(), reverse=True))
 
     def get_total_count(self) -> int:
-        """总记忆条目数"""
+        """总知识条目数"""
         return self.count
 
     # ═══════════════════════════════════════════════════════
@@ -609,7 +669,6 @@ class MemoryStore:
         ds = self._index[date]
         ds.daily_summary = summary
         if keywords:
-            # 合并关键词
             all_kw = list(ds.keywords)
             for kw in keywords:
                 if kw not in all_kw:
@@ -634,7 +693,7 @@ class MemoryStore:
         """获取指定日期的 daily 文件路径"""
         return self._daily_dir / f"{date}.json"
 
-    def _load_day_entries(self, date: str) -> list[MemoryEntry]:
+    def _load_day_entries(self, date: str) -> list[KnowledgeEntry]:
         """加载指定日期的条目 — 缓存优先"""
         # 命中缓存
         if date in self._cache:
@@ -648,11 +707,10 @@ class MemoryStore:
         try:
             raw = json.loads(daily_path.read_text(encoding="utf-8"))
             entries_data = raw.get("entries", [])
-            entries = [MemoryEntry.from_dict(e) for e in entries_data]
+            entries = [KnowledgeEntry.from_dict(e) for e in entries_data]
 
             # 放入缓存
             self._cache[date] = list(entries)
-            # 缓存淘汰
             if len(self._cache) > self.MAX_CACHE_DAYS:
                 self._evict_cache()
 
@@ -665,7 +723,7 @@ class MemoryStore:
     def _save_daily(self, date: str) -> None:
         """保存指定日期的 daily 文件 — 原子写入 (tmp + rename)"""
         if date not in self._cache:
-            return  # 没有脏数据
+            return
 
         self._daily_dir.mkdir(parents=True, exist_ok=True)
         daily_path = self._daily_path(date)
@@ -673,7 +731,6 @@ class MemoryStore:
 
         entries = self._cache[date]
         if not entries:
-            # 空条目 → 删除文件
             if daily_path.exists():
                 daily_path.unlink()
             if tmp_path.exists():
@@ -710,7 +767,7 @@ class MemoryStore:
             days_data[date] = self._index[date].to_dict()
 
         data = {
-            "version": 2,
+            "version": 3,  # v3: KnowledgeEntry 格式
             "updated": _now_beijing(),
             "days": days_data,
         }
@@ -747,88 +804,92 @@ class MemoryStore:
         to_evict = sorted_dates[:len(self._cache) - self.MAX_CACHE_DAYS]
 
         for date in to_evict:
-            # 不踢出今天
             if date == _today_str():
                 continue
             self._cache.pop(date, None)
             logger.debug("[MemoryStore] 缓存淘汰: date={}", date)
 
     # ═══════════════════════════════════════════════════════
-    # 内部方法 — 迁移
+    # 内部方法 — 旧格式清理
     # ═══════════════════════════════════════════════════════
 
-    def _maybe_migrate(self) -> bool:
-        """检测旧 memory.json 并迁移到新格式
+    def _maybe_clean_legacy(self) -> bool:
+        """检测并清理旧 MemoryEntry 格式的数据
+
+        检测策略:
+          1. 检查 index.json 版本号 (v2 = 旧 MemoryEntry 格式)
+          2. 检查 daily 文件中是否有 'role' 字段
+          3. 检查旧 memory.json 文件
 
         Returns:
-            True 如果执行了迁移
+            True 如果执行了清理
         """
-        if not self._legacy_path.exists():
-            return False
+        cleaned = False
 
-        if self._index_path.exists():
-            # 新旧文件共存 → 以新为准，旧文件改名备份
-            backup = self._legacy_path.with_suffix(".json.bak")
+        # 检查旧 memory.json
+        if self._legacy_path.exists():
+            logger.info("[MemoryStore] 检测到旧 memory.json，清理中...")
+            backup = self._legacy_path.with_suffix(".json.bak.v2")
             try:
                 self._legacy_path.rename(backup)
-                logger.info("[MemoryStore] 新旧格式共存，旧文件已备份: {}", backup)
+                logger.info("[MemoryStore] 旧文件已备份: {}", backup)
             except Exception as e:
                 logger.warning("[MemoryStore] 备份旧文件失败: {}", e)
-            return False
+            cleaned = True
 
-        logger.info("[MemoryStore] 检测到旧格式 memory.json，开始迁移...")
+        # 检查 index.json 版本
+        if self._index_path.exists():
+            try:
+                raw = json.loads(self._index_path.read_text(encoding="utf-8"))
+                version = raw.get("version", 1)
+                if version < 3:
+                    logger.info(
+                        "[MemoryStore] 检测到旧版本 index.json (v{})，清理中...",
+                        version,
+                    )
+                    backup = self._index_path.with_suffix(".json.bak.v2")
+                    self._index_path.rename(backup)
+                    logger.info("[MemoryStore] 旧索引已备份: {}", backup)
+                    cleaned = True
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning("[MemoryStore] index.json 读取失败: {}", e)
 
-        try:
-            legacy_data = json.loads(self._legacy_path.read_text(encoding="utf-8"))
-            entries_data = legacy_data.get("entries", [])
-            entries = [MemoryEntry.from_dict(e) for e in entries_data]
+        # 检查 daily 文件是否包含旧 MemoryEntry 格式 (有 'role' 字段)
+        if self._daily_dir.exists() and not cleaned:
+            for f in list(self._daily_dir.iterdir())[:3]:  # 抽样检查前 3 个
+                if f.suffix == ".json" and not f.name.endswith(".tmp"):
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        entries = data.get("entries", [])
+                        if entries and KnowledgeEntry.is_legacy_format(entries[0]):
+                            logger.info(
+                                "[MemoryStore] 检测到旧 MemoryEntry 格式 (有 role 字段)，清理中..."
+                            )
+                            cleaned = True
+                            break
+                    except Exception:
+                        continue
 
-            if not entries:
-                logger.info("[MemoryStore] 旧文件为空，跳过迁移")
-                self._legacy_path.rename(self._legacy_path.with_suffix(".json.bak"))
-                return False
+        if cleaned:
+            # 删除所有旧 daily 文件
+            if self._daily_dir.exists():
+                for f in self._daily_dir.iterdir():
+                    if f.suffix == ".json" and not f.name.endswith(".bak.v2"):
+                        try:
+                            f.unlink()
+                        except Exception as e:
+                            logger.warning("[MemoryStore] 删除旧文件失败: {} - {}", f, e)
+                logger.info("[MemoryStore] 旧 daily 文件已删除")
 
-            # 按日期分组
-            by_date: dict[str, list[MemoryEntry]] = defaultdict(list)
-            for entry in entries:
-                date = _date_from_timestamp(entry.timestamp)
-                by_date[date].append(entry)
+            # 如果旧 index 还没备份，也备份一下
+            if self._index_path.exists():
+                backup = self._index_path.with_suffix(".json.bak.v2")
+                try:
+                    self._index_path.rename(backup)
+                except Exception:
+                    pass
 
-            # 创建 daily 文件 + 构建 index
-            self._daily_dir.mkdir(parents=True, exist_ok=True)
-            for date, day_entries in by_date.items():
-                # 写日文件
-                self._cache[date] = day_entries
-                self._save_daily(date)
-
-                # 构建 index 条目
-                all_kw = list(set(
-                    kw for e in day_entries for kw in e.keywords
-                ))[:20]
-                self._index[date] = DaySummary(
-                    date=date,
-                    file=f"daily/{date}.json",
-                    entry_count=len(day_entries),
-                    daily_summary="",  # 迁移时暂不生成摘要
-                    keywords=all_kw,
-                    importance=max((e.importance for e in day_entries), default=0.5),
-                )
-
-            self._save_index()
-
-            # 旧文件改名备份
-            backup_path = self._legacy_path.with_suffix(".json.bak")
-            self._legacy_path.rename(backup_path)
-
-            logger.info(
-                "[MemoryStore] 迁移完成: {} 条 → {} 天, 旧文件已备份: {}",
-                len(entries), len(by_date), backup_path,
-            )
-            return True
-
-        except Exception as e:
-            logger.error("[MemoryStore] 迁移失败: {}", e)
-            return False
+        return cleaned
 
     # ═══════════════════════════════════════════════════════
     # 内部方法 — 自动压缩
@@ -857,12 +918,10 @@ class MemoryStore:
                 if daily_path.exists():
                     daily_path.unlink()
                     logger.info("[MemoryStore] auto_compact: 删除旧日文件 {}", date)
-                # 清除缓存中的详细条目
                 self._cache.pop(date, None)
                 ds.entry_count = max(ds.entry_count, 1)
                 compacted += 1
             else:
-                # 无摘要 → 标记，跳过
                 logger.debug("[MemoryStore] auto_compact: date={} 无摘要，跳过", date)
 
         if compacted > 0:

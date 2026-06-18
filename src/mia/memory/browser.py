@@ -1,10 +1,10 @@
 """
-MemoryBrowser — 交互式 TUI 记忆浏览器
+MemoryBrowser — 交互式 TUI 知识浏览器
 
 3 级钻取式浏览:
   Level 1: questionary.select 展示日期列表 (方向键选择)
-  Level 2: questionary.select 展示条目列表 (方向键选择)
-  Level 3: rich.Table 展示完整条目详情
+  Level 2: questionary.select 展示知识条目列表 (类别 + 内容预览)
+  Level 3: rich.Table 展示完整知识详情 (9 个字段)
 
 支持降级: 当终端不支持 prompt_toolkit (如 Git Bash) 时自动降级为 flat print 模式。
 
@@ -20,7 +20,8 @@ from typing import Optional
 
 from loguru import logger
 
-from mia.memory.store import MemoryEntry, MemoryStore
+from mia.memory.store import KnowledgeEntry, MemoryStore, CATEGORY_LABELS
+
 
 # ─── 检测终端是否支持交互输入 ──────────────────────
 
@@ -29,21 +30,12 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty()
 
 
-# ─── 角色图标 (纯文本，兼容所有终端) ──────────────────
-
-_ROLE_LABELS = {
-    "user":    "[用户]",
-    "assistant": "[助手]",
-    "system":  "[系统]",
-}
-
-
 class MemoryBrowser:
-    """3 级钻取式记忆浏览器 TUI
+    """3 级钻取式知识浏览器 TUI
 
     Level 1: 日期列表 (条目数 + 日摘要预览)
-    Level 2: 条目列表 (角色 + 内容预览)
-    Level 3: 详情表格 (全部 8 个字段)
+    Level 2: 知识条目列表 (类别图标 + 内容预览)
+    Level 3: 详情表格 (全部 9 个字段)
 
     纯只读，不修改 MemoryStore。
     """
@@ -56,22 +48,22 @@ class MemoryBrowser:
             store: MemoryStore 实例 (只读访问)
         """
         self.store = store
-        self._use_tui = True  # 启动时检测终端是否支持 questionary
+        self._use_tui = True
 
     # ═══════════════════════════════════════════════════════
     # 公开 API
     # ═══════════════════════════════════════════════════════
 
     async def browse(self) -> None:
-        """主入口 — 启动交互式记忆浏览
+        """主入口 — 启动交互式知识浏览
 
-        记忆为空时打印提示并立即返回。
+        知识为空时打印提示并立即返回。
         """
         if self.store.count == 0:
-            print("  \033[90m对话记忆为空。\033[0m")
+            print("  \033[90m知识库为空。\033[0m")
             return
 
-        # 尝试导入 questionary, 失败则降级为 flat 模式
+        # 尝试导入 questionary
         try:
             import questionary
             self._use_tui = True
@@ -79,7 +71,6 @@ class MemoryBrowser:
             logger.info("[MemoryBrowser] questionary 未安装，降级为 flat 模式")
             self._use_tui = False
         except Exception:
-            # prompt_toolkit 在某些终端 (Git Bash) 无法初始化
             logger.info("[MemoryBrowser] 终端不支持 prompt_toolkit，降级为 flat 模式")
             self._use_tui = False
 
@@ -91,7 +82,6 @@ class MemoryBrowser:
         try:
             await self._browse_tui()
         except Exception as e:
-            # 运行时终端错误 (如 NoConsoleScreenBufferError)
             logger.warning("[MemoryBrowser] TUI 失败: {}，降级为 flat", e)
             self._use_tui = False
             await self._browse_flat()
@@ -104,10 +94,9 @@ class MemoryBrowser:
         """TUI 模式: 日期列表 → 条目列表 → 详情 (循环)"""
         import questionary
 
-        # 获取索引快照
         index = self.store.get_index_summaries()
         if not index:
-            print("  \033[90m对话记忆为空。\033[0m")
+            print("  \033[90m知识库为空。\033[0m")
             return
 
         # 只有 1 天: 跳过日期选择，直接进条目列表
@@ -120,7 +109,7 @@ class MemoryBrowser:
         while True:
             date = await self._select_date_tui(index)
             if date is None:
-                break  # 用户选择 [返回] 退出
+                break
             await self._browse_entries_tui(date)
 
     async def _select_date_tui(self, index: dict) -> Optional[str]:
@@ -134,16 +123,23 @@ class MemoryBrowser:
             if ds.daily_summary:
                 summary_preview = ds.daily_summary[:50]
                 label += f" — {summary_preview}"
+            # 类别分布
+            if ds.category_distribution:
+                cat_parts = []
+                for cat, count in sorted(ds.category_distribution.items()):
+                    cat_label = CATEGORY_LABELS.get(cat, f"[{cat}]")
+                    cat_parts.append(f"{cat_label}×{count}")
+                if cat_parts:
+                    label += f"  \033[90m{' '.join(cat_parts)}\033[0m"
             choices.append(questionary.Choice(title=label, value=date))
 
-        # 末尾 [返回] 选项
         choices.append(questionary.Choice(
             title="[返回] 退出浏览器",
             value=None,
         ))
 
         total = self.store.get_total_count()
-        message = f"记忆浏览 — {len(index)} 天, {total} 条记录  选择日期:"
+        message = f"知识浏览 — {len(index)} 天, {total} 条知识  选择日期:"
 
         try:
             result = await questionary.select(
@@ -162,32 +158,45 @@ class MemoryBrowser:
         """浏览某天的条目 — 条目列表 + 详情循环"""
         entries = self.store.load_day(date)
         if not entries:
-            print(f"  \033[90m{date} 无记录。\033[0m")
+            print(f"  \033[90m{date} 无知识条目。\033[0m")
             return
 
+        # 构建 id → entry 映射 (修复 questionary value 序列化问题)
+        entry_map: dict[str, KnowledgeEntry] = {e.id: e for e in entries}
+
         while True:
-            entry = await self._select_entry_tui(date, entries)
-            if entry is None:
-                break  # 用户选择 [返回]
-            await self._show_detail_tui(entry)
+            selected_id = await self._select_entry_tui(date, entries)
+            if selected_id is None:
+                break
+            entry = entry_map.get(selected_id)
+            if entry:
+                await self._show_detail_tui(entry)
 
     async def _select_entry_tui(
-        self, date: str, entries: list[MemoryEntry],
-    ) -> Optional[MemoryEntry]:
-        """Level 2 — questionary.select 条目候选框"""
+        self, date: str, entries: list[KnowledgeEntry],
+    ) -> Optional[str]:
+        """Level 2 — questionary.select 知识条目候选框
+
+        修复: 使用 entry.id (str) 作为 choice value，避免 questionary
+        将 MemoryEntry/KnowledgeEntry 对象序列化为字符串导致的
+        'str' object has no attribute 'id' 错误。
+
+        Returns:
+            选中的 entry.id (str)，或 None (返回上一级)
+        """
         import questionary
 
         choices = []
         for entry in entries:
-            role_label = _ROLE_LABELS.get(entry.role, "[?]")
+            cat_label = entry.category_label
             # 内容预览: 单行，截断到 70 字
             preview = entry.content.replace("\n", " ")[:70]
             if len(entry.content) > 70:
                 preview += "..."
-            label = f"{role_label} {preview}"
-            choices.append(questionary.Choice(title=label, value=entry))
+            label = f"{cat_label} {preview}"
+            # 使用 entry.id (str) 作为 value，不是 entry 对象
+            choices.append(questionary.Choice(title=label, value=entry.id))
 
-        # 末尾 [返回] 选项
         choices.append(questionary.Choice(
             title="[返回] 上一级",
             value=None,
@@ -195,7 +204,7 @@ class MemoryBrowser:
 
         try:
             result = await questionary.select(
-                f"{date} — {len(entries)} 条记录  选择条目:",
+                f"{date} — {len(entries)} 条知识  选择条目:",
                 choices=choices,
                 use_indicator=True,
                 qmark=">",
@@ -206,43 +215,53 @@ class MemoryBrowser:
 
         return result
 
-    async def _show_detail_tui(self, entry: MemoryEntry) -> None:
-        """Level 3 — rich.Table 展示完整条目详情"""
+    async def _show_detail_tui(self, entry: KnowledgeEntry) -> None:
+        """Level 3 — rich.Table 展示完整知识详情 (9 个字段)"""
         try:
             from rich.console import Console
             from rich.table import Table
             from rich.box import ROUNDED
             console = Console()
             table = Table(
-                title=f"记忆详情 [{entry.id[:8]}...]",
+                title=f"知识详情 [{entry.id[:8]}...]",
                 box=ROUNDED,
                 show_header=True,
                 title_style="bold cyan",
             )
-            table.add_column("字段", style="bold cyan", no_wrap=True, width=10)
+            table.add_column("字段", style="bold cyan", no_wrap=True, width=14)
             table.add_column("值", style="")
 
-            role_label = _ROLE_LABELS.get(entry.role, entry.role)
+            # 置信度可视化
+            confidence_bar = "█" * int(entry.confidence * 10) + "░" * (10 - int(entry.confidence * 10))
+            confidence_str = f"{entry.confidence:.2f}  {confidence_bar}"
+
+            # 来源会话
+            source_str = ", ".join(entry.source_sessions[:3]) if entry.source_sessions else "(无)"
+            if len(entry.source_sessions) > 3:
+                source_str += f" ... (+{len(entry.source_sessions) - 3})"
+
             table.add_row("ID", entry.id)
-            table.add_row("角色", role_label)
-            table.add_row("时间", entry.timestamp)
-            table.add_row("重要性", f"{entry.importance:.2f}")
-            table.add_row("会话ID", entry.session_id)
-            table.add_row("摘要", entry.summary or "(无)")
-            table.add_row("关键词", ", ".join(entry.keywords) if entry.keywords else "(无)")
+            table.add_row("类别", entry.category_label)
             table.add_row("内容", entry.content)
+            table.add_row("置信度", confidence_str)
+            table.add_row("重要性", f"{entry.importance:.2f}")
+            table.add_row("关键词", ", ".join(entry.keywords) if entry.keywords else "(无)")
+            table.add_row("来源会话", source_str)
+            table.add_row("创建时间", entry.created_at)
+            table.add_row("更新时间", entry.updated_at)
 
             console.print()
             console.print(table)
             console.print()
 
-            # 等待用户按 Enter 返回 (仅在交互式终端暂停)
             if _is_interactive():
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, input, "  按 Enter 返回...")
+                try:
+                    await loop.run_in_executor(None, input, "  按 Enter 返回...")
+                except (EOFError, OSError):
+                    pass  # 非交互环境 (pytest/Git Bash)，直接跳过
 
         except ImportError:
-            # rich 未安装，降级为纯文本打印
             self._show_detail_plain(entry)
 
     # ═══════════════════════════════════════════════════════
@@ -253,11 +272,11 @@ class MemoryBrowser:
         """Flat 模式: 依次打印日期 → 条目，用 input 分页"""
         index = self.store.get_index_summaries()
         if not index:
-            print("  \033[90m对话记忆为空。\033[0m")
+            print("  \033[90m知识库为空。\033[0m")
             return
 
         total = self.store.get_total_count()
-        print(f"\n  \033[90m对话记忆: {len(index)} 天, {total} 条记录\033[0m")
+        print(f"\n  \033[90m知识库: {len(index)} 天, {total} 条知识\033[0m")
         print()
 
         interactive = _is_interactive()
@@ -268,19 +287,23 @@ class MemoryBrowser:
 
             entries = self.store.load_day(date)
             for i, entry in enumerate(entries):
-                role_label = _ROLE_LABELS.get(entry.role, "[?]")
+                cat_label = entry.category_label
                 preview = entry.content.replace("\n", " ")[:80]
                 if len(entry.content) > 80:
                     preview += "..."
-                print(f"    \033[90m[{i+1}]\033[0m {role_label} {preview}")
+                # 显示置信度
+                conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"
+                print(f"    \033[90m[{i+1}]\033[0m {cat_label} {preview} {conf_str}")
 
-            # 只在交互式终端暂停 (pytest/管道跳过)
             if interactive and len(entries) > 0:
                 print()
-                await asyncio.get_event_loop().run_in_executor(
-                    None, input,
-                    f"  \033[90m按 Enter 继续...\033[0m",
-                )
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, input,
+                        f"  \033[90m按 Enter 继续...\033[0m",
+                    )
+                except (EOFError, OSError):
+                    pass  # 非交互环境，跳过
 
         print()
 
@@ -288,18 +311,18 @@ class MemoryBrowser:
     # 纯文本详情 (无 rich 时的降级)
     # ═══════════════════════════════════════════════════════
 
-    def _show_detail_plain(self, entry: MemoryEntry) -> None:
-        """纯文本打印 MemoryEntry 全部字段"""
-        role_label = _ROLE_LABELS.get(entry.role, entry.role)
+    def _show_detail_plain(self, entry: KnowledgeEntry) -> None:
+        """纯文本打印 KnowledgeEntry 全部字段"""
         print()
         print(f"  \033[1m{'─' * 50}\033[0m")
         print(f"  \033[36mID:\033[0m       {entry.id}")
-        print(f"  \033[36m角色:\033[0m     {role_label}")
-        print(f"  \033[36m时间:\033[0m     {entry.timestamp}")
+        print(f"  \033[36m类别:\033[0m     {entry.category_label}")
+        print(f"  \033[36m置信度:\033[0m   {entry.confidence:.2f}")
         print(f"  \033[36m重要性:\033[0m   {entry.importance:.2f}")
-        print(f"  \033[36m会话ID:\033[0m   {entry.session_id}")
-        print(f"  \033[36m摘要:\033[0m     {entry.summary or '(无)'}")
         print(f"  \033[36m关键词:\033[0m   {', '.join(entry.keywords) if entry.keywords else '(无)'}")
+        print(f"  \033[36m来源会话:\033[0m {', '.join(entry.source_sessions[:3]) if entry.source_sessions else '(无)'}")
+        print(f"  \033[36m创建时间:\033[0m {entry.created_at}")
+        print(f"  \033[36m更新时间:\033[0m {entry.updated_at}")
         print(f"  \033[1m{'─' * 50}\033[0m")
         print(f"  \033[36m内容:\033[0m")
         print(f"  {entry.content}")
