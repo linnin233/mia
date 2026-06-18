@@ -22,6 +22,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 # 确保项目根目录在 sys.path 中
 _project_root = Path(__file__).parent.parent.parent
 if str(_project_root) not in sys.path:
@@ -224,54 +226,211 @@ async def run_cli_query(
         sys.exit(1)
 
 
+async def _handle_compact(scheduler: SchedulerAgent) -> None:
+    """处理 /compact 命令 — 压缩跨对话历史"""
+    if not scheduler.conversation_memory:
+        print("  \033[90m对话历史为空，无需压缩。\033[0m")
+        print()
+        return
+
+    memory_count = len(scheduler.conversation_memory)
+    print(f"  \033[90m正在压缩对话历史 ({memory_count} 条记录)...\033[0m")
+    try:
+        await scheduler.compact_memory()
+        new_count = len(scheduler.conversation_memory)
+        print(f"  \033[32m✅ 对话历史已压缩 ({memory_count} 条 → {new_count} 条摘要)\033[0m")
+    except Exception as e:
+        print(f"  \033[31m❌ 压缩失败: {e}\033[0m")
+    print()
+
+
 async def run_cli_interactive() -> None:
-    """CLI 交互模式 — 持续对话循环"""
+    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)"""
     print(f"\033[1mMIA v0.1.0 — 交互模式\033[0m")
-    print(f"  输入 '/quit' 退出, '/help' 查看帮助")
+    print(f"  输入 '/quit' 退出, '/help' 查看帮助, '/compact' 压缩对话历史")
     print(f"  直接输入问题开始对话")
     print()
 
-    while True:
-        try:
-            user_input = input("\033[32mYou > \033[0m").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见~")
-            break
+    # ══════════════════════════════════════════════════════
+    # 系统初始化 — 只执行一次，整个交互会话内持续运行
+    # ══════════════════════════════════════════════════════
 
-        if not user_input:
-            continue
+    config = get_config()
+    bus = MessageBus(max_queue_size=100)
+    await bus.start()
 
-        if user_input.lower() in ("/quit", "/exit", "/q"):
-            print("再见~")
-            break
+    mimo = MiMoProvider(api_key=config.mimo.api_key)
+    deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
 
-        if user_input.lower() in ("/help", "/h"):
-            print("""
+    receiver = ReceiverAgent(bus=bus, mimo=mimo)
+    scheduler = SchedulerAgent(
+        bus=bus,
+        provider=mimo,
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,
+        fallback_model=config.deepseek.chat_model,
+    )
+    sender = SenderAgent(
+        bus=bus,
+        mimo=mimo,
+        output_dir=config.agent.workspace_dir,
+    )
+    task_agent = TaskAgent(
+        bus=bus,
+        provider=mimo,
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,
+        fallback_model=config.deepseek.chat_model,
+    )
+
+    # 启动所有 Agent
+    print(f"\033[1m{'='*50}\033[0m")
+    print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent (持久模式)\033[0m")
+    print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
+    print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
+    print(f"  记忆: 最多 {scheduler._max_memory_turns} 轮对话")
+    print(f"\033[1m{'='*50}\033[0m")
+    print()
+
+    await receiver.start()
+    await scheduler.start()
+    await sender.start()
+    await task_agent.start()
+
+    # 后台消息处理循环 (持久运行)
+    tasks: list[asyncio.Task] = []
+    for agent in [receiver, scheduler, sender, task_agent]:
+        tasks.append(asyncio.create_task(agent.run()))
+
+    await asyncio.sleep(0.3)
+
+    try:
+        # ══════════════════════════════════════════════════
+        # 用户输入循环 — 每轮对话在持久系统中处理
+        # ══════════════════════════════════════════════════
+        while True:
+            try:
+                user_input = input("\033[32mYou > \033[0m").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n再见~")
+                break
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ("/quit", "/exit", "/q"):
+                print("再见~")
+                break
+
+            if user_input.lower() in ("/help", "/h"):
+                print("""
 命令:
   /quit, /exit, /q  — 退出
   /help, /h         — 显示帮助
+  /compact          — 压缩对话历史 (将多轮对话总结为摘要，节省 token)
+  /memory           — 显示当前对话记忆状态
   /image <path>     — 发送图片 (下一行输入)
   直接输入文本       — 开始对话
 
 示例:
   You > 帮我搜索最新的 Python 新闻
+  You > 嘉兴的天气怎么样
+  You > /compact
   You > /image screenshot.png
   You > 分析这张截图
 """)
-            continue
+                continue
 
-        # 检查是否附带图片
-        image_path = None
-        if user_input.startswith("/image "):
-            image_path = user_input[7:].strip()
-            # 等待用户输入文本
-            user_input = input("\033[32mYou (图片说明) > \033[0m").strip()
-            if not user_input:
-                user_input = "请描述这张图片"
+            # /compact — 压缩对话历史
+            if user_input.lower() == "/compact":
+                await _handle_compact(scheduler)
+                continue
 
-        print()
-        await run_cli_query(user_input, image_path=image_path)
-        print()
+            # /memory — 显示记忆状态
+            if user_input.lower() == "/memory":
+                mem = scheduler.conversation_memory
+                if not mem:
+                    print("  \033[90m对话记忆为空。\033[0m")
+                else:
+                    print(f"  \033[90m对话记忆: {len(mem)} 条记录 (最近 {scheduler._max_memory_turns} 轮)\033[0m")
+                    # 显示最近 3 条
+                    for entry in mem[-6:]:
+                        role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry["role"], "?")
+                        content = entry["content"][:80] + "..." if len(entry["content"]) > 80 else entry["content"]
+                        print(f"    \033[90m[{role}]\033[0m {content}")
+                print()
+                continue
+
+            # 检查图片
+            image_path = None
+            if user_input.startswith("/image "):
+                image_path = user_input[7:].strip()
+                user_input = input("\033[32mYou (图片说明) > \033[0m").strip()
+                if not user_input:
+                    user_input = "请描述这张图片"
+
+            # ─── 本轮对话 ────────────────────────────
+            session_id = uuid.uuid4().hex[:12]
+
+            # 注入 RAW_INPUT 到持久系统
+            raw_msg = Message(
+                msg_type=MessageType.RAW_INPUT,
+                source="main",
+                target="receiver",
+                payload={
+                    "text": user_input,
+                    "image": image_path,
+                    "voice": None,
+                },
+                session_id=session_id,
+            )
+            await bus.publish(raw_msg)
+
+            print(f"\033[36m[Main]\033[0m 用户输入已注入: {user_input}")
+
+            # 等待 CONVERSATION_DONE
+            await bus.subscribe("main")
+            main_timeout = 180.0
+            final_response: Optional[str] = None
+
+            while main_timeout > 0:
+                msg = await bus.receive("main", timeout=1.0)
+                main_timeout -= 1.0
+
+                if msg is None:
+                    continue
+
+                if msg.msg_type == MessageType.CONVERSATION_DONE:
+                    final_response = msg.payload.get("message", "")
+                    break
+
+                if msg.msg_type == MessageType.TASK_ERROR:
+                    print(f"\033[31m[Main] 检测到 TASK_ERROR: {msg.payload.get('error', '')}\033[0m")
+
+            # 清理本次订阅，准备下一轮对话
+            await bus.unsubscribe("main")
+
+            if final_response is None:
+                print(f"\n\033[31m[Main] 超时 (180s)，未收到回复\033[0m")
+            else:
+                print()
+                print(f"\033[1m{'='*50}\033[0m")
+                print(f"\033[1m[完成] 对话结束\033[0m")
+
+    except Exception as e:
+        logger.error("[Main] Agent 链路异常: {}", e)
+        print(f"\033[31m[Main] 错误: {e}\033[0m")
+
+    finally:
+        # ─── 清理 — 退出时执行一次 ─────────────────
+        print("\n\033[90m正在关闭 Agent 系统...\033[0m")
+        for agent in [receiver, scheduler, sender, task_agent]:
+            await agent.stop()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await bus.stop()
+        print("\033[90m已关闭。\033[0m")
 
 
 async def run_server(port: int) -> None:
