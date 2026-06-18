@@ -99,10 +99,10 @@ async def run_agent_pipeline(
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
-        provider=deepseek,      # 主: DeepSeek (MiMo Token Plan 当前不稳定)
-        model=config.deepseek.chat_model,
-        fallback_provider=mimo,   # 备选: MiMo
-        fallback_model=config.mimo.chat_model,
+        provider=mimo,            # 主: MiMo (已修复网关和参数问题)
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,  # 备选: DeepSeek
+        fallback_model=config.deepseek.chat_model,
     )
     sender = SenderAgent(
         bus=bus,
@@ -111,8 +111,10 @@ async def run_agent_pipeline(
     )
     task_agent = TaskAgent(
         bus=bus,
-        provider=deepseek,      # TaskAgent 用 DeepSeek
-        model=config.deepseek.chat_model,
+        provider=mimo,            # TaskAgent 也用 MiMo
+        model=config.mimo.chat_model,
+        fallback_provider=deepseek,  # 备选: DeepSeek
+        fallback_model=config.deepseek.chat_model,
     )
 
     # ─── 4. 启动所有 Agent ───────────────────────────
@@ -120,7 +122,7 @@ async def run_agent_pipeline(
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent\033[0m")
     print(f"  Session: {session_id}")
     print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
-    print(f"  Backup: deepseek-chat @ {config.deepseek.base_url}")
+    print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
     print(f"\033[1m{'='*50}\033[0m")
     print()
 

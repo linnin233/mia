@@ -79,8 +79,9 @@ class MiMoProvider(BaseProvider):
             "stream": stream,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            # 显式关闭 thinking (Scheduler 不需要深度推理)
-            "extra_body": {"thinking": {"type": "disabled"}},
+            # 注意: 不再传 thinking: disabled
+            # Anthropic 格式 {"thinking": {"type": "disabled"}} 在 MiMo OpenAI 兼容端点下
+            # 可能被忽略或触发兼容性问题 (400 Param Incorrect)
         }
         if tools:
             kwargs["tools"] = tools

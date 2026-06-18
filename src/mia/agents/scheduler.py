@@ -237,7 +237,7 @@ class SchedulerAgent(BaseAgent):
             response = await self.provider.chat_sync(
                 messages=messages,
                 model=self.model,
-                max_tokens=1024,
+                max_tokens=2048,  # 1024 不够导致 JSON 截断
                 temperature=0.3,
             )
         except Exception as e:
@@ -251,7 +251,7 @@ class SchedulerAgent(BaseAgent):
                 response = await self.fallback_provider.chat_sync(
                     messages=messages,
                     model=self.fallback_model,
-                    max_tokens=1024,
+                    max_tokens=2048,  # 1024 不够导致 JSON 截断
                     temperature=0.3,
                 )
             except Exception as e:
@@ -276,7 +276,7 @@ class SchedulerAgent(BaseAgent):
                 response = await self.provider.chat_sync(
                     messages=messages,
                     model=self.model,
-                    max_tokens=1024,
+                    max_tokens=2048,  # 1024 不够导致 JSON 截断
                     temperature=0.1,
                 )
                 decision = self._parse_decision(response)

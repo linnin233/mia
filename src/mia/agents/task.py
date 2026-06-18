@@ -37,6 +37,12 @@ from mia.tools.file import FileTool
 TASK_AGENT_SYSTEM_PROMPT = """你是一个任务执行器(TaskAgent)。你会收到一个任务描述，
 你的目标是使用可用的工具完成任务并返回结果。
 
+## 核心原则：尽早完成！
+- 你最多只能执行 5 次工具调用。如果你用完了所有次数还未 finish，任务会失败。
+- 因此，一旦你获得了足够回答用户的信息，立即 finish，不要无限优化搜索词。
+- 最多调用 2 次同类工具。如果前 2 次搜索没有找到好结果，用已有的信息合成答案，不要继续搜。
+- 搜索工具返回的结果可能不完美，这很正常 — 从已有结果中提取有用信息即可。
+
 ## 工作方式
 每次迭代，你可以选择:
 1. 调用一个工具来执行操作
@@ -57,10 +63,11 @@ TASK_AGENT_SYSTEM_PROMPT = """你是一个任务执行器(TaskAgent)。你会收
 
 ## 规则
 1. 每次只调用一个工具
-2. 根据工具执行结果决定下一步
+2. 获得搜索结果后，优先 finish 并总结发现的信息，而不是反复调整搜索词
 3. 任务完成或无法继续时返回 finish
-4. 如果工具调用失败，分析原因后决定重试还是放弃
+4. 如果工具调用失败，分析原因后决定重试（最多1次）还是放弃
 5. 结果要简洁但完整，包含用户需要的信息
+6. 用中文组织最终结果
 """
 
 
@@ -77,17 +84,23 @@ class TaskAgent(BaseAgent):
         provider: BaseProvider,
         tools: Optional[list[Tool]] = None,
         model: Optional[str] = None,
+        fallback_provider: Optional[BaseProvider] = None,
+        fallback_model: Optional[str] = None,
     ):
         """
         Args:
             bus: 消息总线
-            provider: LLM Provider
+            provider: LLM Provider (主)
             tools: 可用工具列表 (默认注册全部工具)
             model: 模型名
+            fallback_provider: 备选 Provider (主 Provider 失败时使用)
+            fallback_model: 备选模型名
         """
         super().__init__(name="task_agent", bus=bus)
         self.provider = provider
         self.model = model
+        self.fallback_provider = fallback_provider
+        self.fallback_model = fallback_model
 
         # 注册工具
         self.tools: dict[str, Tool] = {}
@@ -171,17 +184,10 @@ class TaskAgent(BaseAgent):
         ]
 
         for iteration in range(self.MAX_ITERATIONS):
-            # 调用 LLM
-            try:
-                response = await self.provider.chat_sync(
-                    messages=messages,
-                    model=self.model,
-                    max_tokens=1024,
-                    temperature=0.3,
-                )
-            except Exception as e:
-                logger.error("[TaskAgent] LLM 调用失败: {}", e)
-                return f"任务执行中 LLM 调用失败: {e}", tool_calls
+            # 调用 LLM (主 Provider + 备选 fallback)
+            response = await self._call_llm(messages)
+            if response is None:
+                return "任务执行中 LLM 调用失败 (主+备选均不可用)", tool_calls
 
             # 解析决策
             decision = self._parse_decision(response)
@@ -270,6 +276,42 @@ class TaskAgent(BaseAgent):
                 lines.append("")
 
         return "\n".join(lines) if lines else "无可用工具"
+
+    async def _call_llm(self, messages: list[dict]) -> Optional[str]:
+        """调用 LLM，支持主 Provider + 备选 fallback
+
+        Returns:
+            LLM 响应文本，主备都失败返回 None
+        """
+        last_error = None
+
+        # 尝试主 Provider
+        try:
+            return await self.provider.chat_sync(
+                messages=messages,
+                model=self.model,
+                max_tokens=2048,  # 1024 不够，搜索结果较长时回复被截断
+                temperature=0.3,
+            )
+        except Exception as e:
+            last_error = e
+            logger.warning("[TaskAgent] 主 Provider 失败: {}. 尝试备选...", e)
+
+        # 尝试备选 Provider
+        if self.fallback_provider:
+            try:
+                logger.info("[TaskAgent] 使用备选 Provider: {}", self.fallback_provider.__class__.__name__)
+                return await self.fallback_provider.chat_sync(
+                    messages=messages,
+                    model=self.fallback_model,
+                    max_tokens=1024,
+                    temperature=0.3,
+                )
+            except Exception as e:
+                last_error = e
+                logger.error("[TaskAgent] 备选 Provider 也失败: {}", e)
+
+        return None
 
     def _parse_decision(self, text: str) -> Optional[dict]:
         """从 LLM 输出中解析 JSON 决策"""
