@@ -189,7 +189,7 @@ class SchedulerAgent(BaseAgent):
         self._task_history.clear()
         self._decision_history.clear()
 
-        logger.info("[Scheduler] 收到用户意图: {}", msg.payload.get("intent", "")[:100])
+        logger.info("[Scheduler] 收到用户意图: {}", msg.payload.get("intent", ""))
 
         # 打印思考前缀
         self._print_thought("分析用户意图", msg.payload.get("intent", ""))
@@ -206,8 +206,8 @@ class SchedulerAgent(BaseAgent):
             self._print_thought("收到任务错误", msg.payload.get("error", ""))
         else:
             result = msg.payload.get("result", "")
-            logger.info("[Scheduler] 收到任务结果: {}", result[:100])
-            self._print_thought("收到任务结果", result[:200])
+            logger.info("[Scheduler] 收到任务结果: {}", result)
+            self._print_thought("收到任务结果", result)
 
         # 继续 LLM 循环
         self._iteration += 1
@@ -363,7 +363,7 @@ class SchedulerAgent(BaseAgent):
         reasoning = decision.get("reasoning", "")
         detail = decision.get("action_detail", {})
 
-        logger.info("[Scheduler] 决策: action={}, reasoning={}", action, reasoning[:100])
+        logger.info("[Scheduler] 决策: action={}, reasoning={}", action, reasoning)
 
         if action == "reply":
             # 发送回复
@@ -371,7 +371,7 @@ class SchedulerAgent(BaseAgent):
             message = detail.get("message", "")
             use_voice = detail.get("use_voice", False)
 
-            self._print_thought(f"决策: 回复用户", message[:100])
+            self._print_thought(f"决策: 回复用户", message)
 
             if use_voice:
                 voice = detail.get("voice", "冰糖")
@@ -394,8 +394,8 @@ class SchedulerAgent(BaseAgent):
 
             # 检查重复任务
             if task in self._task_history:
-                logger.warning("[Scheduler] 检测到重复任务: {}", task[:50])
-                self._print_thought("检测到重复任务，跳过", task[:100])
+                logger.warning("[Scheduler] 检测到重复任务: {}", task)
+                self._print_thought("检测到重复任务，跳过", task)
                 # 不真正执行，而是模拟一个结果继续循环
                 fake_result = Message(
                     msg_type=MessageType.TASK_RESULT,
@@ -462,12 +462,12 @@ class SchedulerAgent(BaseAgent):
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            logger.warning("[Scheduler] JSON 解析失败: {}\n原始文本: {}", e, text[:300])
+            logger.warning("[Scheduler] JSON 解析失败: {}\n原始文本: {}", e, text)
             return None
 
     async def _force_reply(self, message: str) -> None:
         """强制回复 — 当循环无法正常完成时使用"""
-        logger.info("[Scheduler] 强制回复: {}", message[:50])
+        logger.info("[Scheduler] 强制回复: {}", message)
         await self.send(make_send_text(
             message=message,
             session_id=self._session_id,
@@ -479,8 +479,6 @@ class SchedulerAgent(BaseAgent):
         indent = "   "
         print(f"\033[36m[Scheduler]\033[0m {title}")
         if detail:
-            # 截断过长内容
-            display = detail[:150] + "..." if len(detail) > 150 else detail
-            for line in display.split("\n")[:3]:
+            for line in detail.split("\n"):
                 print(f"{indent}\033[90m├─\033[0m {line}")
         print()

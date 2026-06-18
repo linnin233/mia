@@ -131,11 +131,11 @@ class TaskAgent(BaseAgent):
 
         # 结构化展示
         print(f"\033[33m[TaskAgent]\033[0m 收到任务")
-        print(f"   \033[90m├─\033[0m 任务: {task[:150]}")
+        print(f"   \033[90m├─\033[0m 任务: {task}")
         if tools_hint:
             print(f"   \033[90m├─\033[0m 建议工具: {', '.join(tools_hint)}")
 
-        logger.info("[TaskAgent] 开始执行任务: {}", task[:100])
+        logger.info("[TaskAgent] 开始执行任务: {}", task)
 
         try:
             result_text, tool_calls = await self._execute_task(
@@ -228,7 +228,7 @@ class TaskAgent(BaseAgent):
                     continue
 
                 # 执行工具
-                print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)[:80]})")
+                print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)})")
 
                 try:
                     tool = self.tools[tool_name]
@@ -242,7 +242,7 @@ class TaskAgent(BaseAgent):
                     "tool": tool_name,
                     "args": tool_args,
                     "success": result.success,
-                    "output": str(result.data)[:500] if result.data else result.error,
+                    "output": str(result.data) if result.data else result.error,
                 })
 
                 # 将结果反馈给 LLM
@@ -336,5 +336,5 @@ class TaskAgent(BaseAgent):
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
-            logger.warning("[TaskAgent] JSON 解析失败: {}\n文本: {}", e, text[:200])
+            logger.warning("[TaskAgent] JSON 解析失败: {}\n文本: {}", e, text)
             return None

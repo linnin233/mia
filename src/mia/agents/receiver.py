@@ -87,12 +87,12 @@ class ReceiverAgent(BaseAgent):
 
         # 结构化展示
         print(f"\033[35m[Receiver]\033[0m 理解用户输入")
-        print(f"   \033[90m├─\033[0m 原始输入: {text[:100] if text else '(无文本)'}")
+        print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
         if image_path:
             print(f"   \033[90m├─\033[0m 图片: {image_path}")
         if voice_path:
             print(f"   \033[90m├─\033[0m 语音: {voice_path}")
-        print(f"   \033[90m└─\033[0m 意图: {full_intent[:150]}")
+        print(f"   \033[90m└─\033[0m 意图: {full_intent}")
 
         # 发送到 Scheduler
         intent_msg = make_user_intent(
@@ -144,7 +144,7 @@ class ReceiverAgent(BaseAgent):
 
             prompt = f"请详细描述这张图片的内容。{'用户同时说: ' + context if context else ''}"
             description = await self.mimo.understand_image(image_data, prompt=prompt)
-            logger.info("[Receiver] 图片理解完成: {}", description[:100])
+            logger.info("[Receiver] 图片理解完成: {}", description)
             return description
 
         except Exception as e:
@@ -178,7 +178,7 @@ class ReceiverAgent(BaseAgent):
             audio_data = MiMoProvider.encode_audio_file(str(path), mime_type)
 
             text = await self.mimo.transcribe(audio_data)
-            logger.info("[Receiver] 语音识别完成: {}", text[:100])
+            logger.info("[Receiver] 语音识别完成: {}", text)
             return text
 
         except Exception as e:

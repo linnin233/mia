@@ -84,7 +84,7 @@ class SenderAgent(BaseAgent):
         # 结构化展示
         print()
         print(f"\033[32m[Sender]\033[0m 输出语音回复 (音色: {voice}):")
-        print(f"   \033[90m├─\033[0m 文本: {message[:150]}")
+        print(f"   \033[90m├─\033[0m 文本: {message}")
 
         try:
             audio_bytes = await self.mimo.synthesize(
@@ -107,6 +107,6 @@ class SenderAgent(BaseAgent):
         except Exception as e:
             logger.error("[Sender] TTS 合成失败: {}", e)
             print(f"   \033[90m└─\033[0m \033[31m语音合成失败: {e}\033[0m")
-            print(f"   \033[90m└─\033[0m 降级为文本: {message[:150]}")
+            print(f"   \033[90m└─\033[0m 降级为文本: {message}")
             print()
             print(f"\033[1m{'-'*50}\033[0m")
