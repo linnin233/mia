@@ -313,7 +313,7 @@ async def run_cli_interactive() -> None:
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent (持久模式)\033[0m")
     print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
     print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
-    print(f"  记忆: MemoryAgent @ {memory_agent.store.file_path}")
+    print(f"  记忆: MemoryAgent @ {memory_agent.store.file_path}/ (index+daily)")
     print(f"\033[1m{'='*50}\033[0m")
     print()
 
@@ -372,19 +372,26 @@ async def run_cli_interactive() -> None:
                 await _handle_compact(memory_agent)
                 continue
 
-            # /memory — 显示记忆状态
+            # /memory — 显示记忆状态 (按日分组)
             if user_input.lower() == "/memory":
-                entries = memory_agent.store.get_all()
-                if not entries:
+                index = memory_agent.store.get_index_summaries()
+                total = memory_agent.store.get_total_count()
+                if not index:
                     print("  \033[90m对话记忆为空。\033[0m")
                 else:
-                    print(f"  \033[90m对话记忆: {len(entries)} 条记录\033[0m")
-                    # 显示最近 6 条
-                    for entry in entries[-6:]:
-                        role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry.role, "?")
-                        content = entry.content[:80] + "..." if len(entry.content) > 80 else entry.content
-                        summary_hint = f" [{entry.summary[:40]}]" if entry.summary else ""
-                        print(f"    \033[90m[{role}]\033[0m{summary_hint} {content}")
+                    print(f"  \033[90m对话记忆: {len(index)} 天, {total} 条记录\033[0m")
+                    # 按日分组展示 (最近 7 天)
+                    for date, ds in list(index.items())[:7]:
+                        summary_hint = f" — {ds.daily_summary}" if ds.daily_summary else ""
+                        print(f"  \033[33m📅 {date}\033[0m ({ds.entry_count}条){summary_hint}")
+                        # 显示该日前 4 条
+                        day_entries = memory_agent.store.load_day(date)
+                        for entry in day_entries[:4]:
+                            role = {"user": "用户", "assistant": "助手", "system": "📋"}.get(entry.role, "?")
+                            content = entry.content[:80] + "..." if len(entry.content) > 80 else entry.content
+                            print(f"    \033[90m[{role}]\033[0m {content}")
+                        if ds.entry_count > 4:
+                            print(f"    \033[90m... 还有 {ds.entry_count - 4} 条\033[0m")
                 print()
                 continue
 

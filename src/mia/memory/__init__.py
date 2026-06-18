@@ -6,12 +6,12 @@ MIA Memory Package — 记忆管理模块
   - ReMeLight 的 file-based 存储哲学
   - Summarizer + Retriever 分离模式
 
-模块结构:
-  - store.py: MemoryEntry dataclass + MemoryStore (JSON 持久化)
-  - retriever.py: MemoryRetriever (关键词 + LLM 相关性检索)
+分级存储架构 (v2):
+  - store.py: MemoryEntry + DaySummary + MemoryStore (index + daily shards)
+  - retriever.py: MemoryRetriever (两阶段: 扫索引 → 深搜)
 """
 
-from mia.memory.store import MemoryEntry, MemoryStore
+from mia.memory.store import MemoryEntry, MemoryStore, DaySummary
 from mia.memory.retriever import MemoryRetriever
 
-__all__ = ["MemoryEntry", "MemoryStore", "MemoryRetriever"]
+__all__ = ["MemoryEntry", "MemoryStore", "MemoryRetriever", "DaySummary"]

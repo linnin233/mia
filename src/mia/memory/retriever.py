@@ -3,15 +3,18 @@ MemoryRetriever — 记忆检索器
 
 参考 ReMe 的检索设计：
   - ReMe: 向量 + BM25 混合检索 (vector_weight=0.7, bm25=0.3)
-  - MIA MVP: 关键词重叠 + LLM 相关性评分 (无向量数据库依赖)
+  - MIA: 两阶段检索 — 索引扫描 + 按需加载 (无向量数据库依赖)
 
-检索流程 (参考 ReMeLight.pre_reasoning_hook):
-  1. 从 MemoryStore 提取所有记忆
-  2. 关键词重叠匹配 → 快速初筛候选集
-  3. (可选) LLM 相关性评分 → 精确过滤
-  4. 综合排序 (重要性 + 相关性 + 时间)
-  5. 返回 top_k 条
-  6. 调用 LLM 生成精炼的上下文摘要 → 注入 Scheduler
+检索流程 (两阶段):
+  Phase 1: scan_index() → 扫 index.json 的日摘要定位相关日期
+  Phase 2: load_day() → 只加载相关日期的 daily 文件 → 关键词匹配 + LLM 重排序
+  Phase 3: summarize_for_context() → 生成精炼上下文摘要注入 Scheduler
+
+降级策略:
+  - 索引无匹配 → 加载最近 3 天
+  - LLM 关键词提取失败 → 简单分词
+  - LLM 相关性评分失败 → 仅用关键词排序
+  - LLM 摘要生成失败 → 简单拼接
 
 同时参考了:
   - reme/memory/file_based/tools/memory_search.py (MemorySearch tool)
@@ -103,18 +106,22 @@ class MemoryRetriever:
         store: MemoryStore,
         top_k: int = 5,
     ) -> list[MemoryEntry]:
-        """检索与用户意图最相关的历史记忆
+        """检索与用户意图最相关的历史记忆 — 两阶段检索
+
+        Phase 1: 扫索引 (scan_index) → 定位相关日期 (O(天数), ~90 条)
+        Phase 2: 按需加载 (load_day) → 只加载相关日文件 → 关键词匹配 + LLM 重排序
+
+        降级: 索引无匹配 → 加载最近 3 天
 
         Args:
             intent: 用户意图描述
-            store: 记忆存储
+            store: 记忆存储 (分级存储)
             top_k: 返回条数
 
         Returns:
             相关记忆列表 (按相关性排序)
         """
-        all_entries = store.get_all()
-        if not all_entries:
+        if store.count == 0:
             return []
 
         # 阶段 1: 关键词提取 (调用 LLM)
@@ -125,27 +132,45 @@ class MemoryRetriever:
 
         logger.debug("[MemoryRetriever] 关键词: {}", keywords)
 
-        # 阶段 2: 关键词重叠匹配 → 快速初筛候选集
-        candidates = self._keyword_match(keywords, all_entries)
+        # 阶段 2: 扫索引 → 定位相关日期 (两阶段检索核心)
+        relevant_dates = store.scan_index(keywords, limit=7)
+
+        # 阶段 3: 按需加载相关日文件 → 收集候选条目
+        candidates = []
+        for date in relevant_dates:
+            candidates.extend(store.load_day(date))
 
         if not candidates:
-            # 关键词没匹配到，回退到最近 N 条
+            # 索引无匹配，降级: 加载最近 3 天
+            for date in store.get_recent_dates(3):
+                candidates.extend(store.load_day(date))
+            logger.debug(
+                "[MemoryRetriever] 索引无匹配，降级到最近 {} 天, {} 条",
+                len(store.get_recent_dates(3)), len(candidates),
+            )
+
+        # 阶段 4: 关键词重叠匹配 → 快速初筛
+        candidates = self._keyword_match(keywords, candidates)
+
+        if not candidates:
+            # 仍未匹配，回退到最近 N 条
             candidates = store.get_recent(top_k * 2)
             logger.debug("[MemoryRetriever] 关键词无匹配，回退到最近 {} 条", len(candidates))
 
-        # 阶段 3: LLM 相关性评分 (可选)
+        # 阶段 5: LLM 相关性评分 (可选)
         if self.enable_llm_rerank and len(candidates) > top_k and self.provider:
             try:
                 candidates = await self._llm_rerank(intent, candidates, top_k)
             except Exception as e:
                 logger.warning("[MemoryRetriever] LLM 相关性评分失败: {}, 使用关键词排序", e)
 
-        # 阶段 4: 综合排序 + Top-K
+        # 阶段 6: Top-K
         results = candidates[:top_k]
         logger.info(
-            "[MemoryRetriever] 检索完成: {} 条候选 → {} 条结果",
+            "[MemoryRetriever] 检索完成: {} 条候选 → {} 条结果 (扫了 {} 天索引)",
             len(candidates),
             len(results),
+            len(relevant_dates),
         )
         return results
 
