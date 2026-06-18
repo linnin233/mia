@@ -63,6 +63,7 @@ class MemoryBrowser:
         self.store = store
         self.working_entries: list[KnowledgeEntry] = working_entries or []
         self._use_tui = True
+        self._exit_requested = False  # 退出信号 (跨多层循环)
 
     # ═══════════════════════════════════════════════════════
     # 公开 API
@@ -96,12 +97,11 @@ class MemoryBrowser:
             return
 
         # ─── TUI 模式: 3 级钻取 ─────────────────────
+        self._exit_requested = False
         try:
             await self._browse_tui()
-        except _BrowserExit:
-            pass  # 用户正常退出，静默返回
         except KeyboardInterrupt:
-            pass  # 用户 Ctrl+C / Esc，静默返回
+            pass  # 用户 Ctrl+C，静默返回
         except Exception as e:
             logger.warning("[MemoryBrowser] TUI 失败: {}，降级为 flat", e)
             self._use_tui = False
@@ -144,10 +144,9 @@ class MemoryBrowser:
             return
 
         # 正常流程: 日期 → 条目 → 详情
-        while True:
-            try:
-                date = await self._select_date_tui(index)
-            except _BrowserExit:
+        while not self._exit_requested:
+            date = await self._select_date_tui(index)
+            if self._exit_requested or date is None:
                 break
             await self._browse_entries_tui(date)
 
@@ -189,10 +188,11 @@ class MemoryBrowser:
                 instruction="(↑↓ 移动, Enter 选择, Esc 退出)",
             ).ask_async()
         except KeyboardInterrupt:
-            raise _BrowserExit()
+            self._exit_requested = True
+            return None
 
         if result is None:
-            raise _BrowserExit()
+            self._exit_requested = True
 
         return result
 
@@ -206,10 +206,9 @@ class MemoryBrowser:
         # 构建 id → entry 映射 (修复 questionary value 序列化问题)
         entry_map: dict[str, KnowledgeEntry] = {e.id: e for e in entries}
 
-        while True:
-            try:
-                selected_id = await self._select_entry_tui(date, entries)
-            except _BrowserExit:
+        while not self._exit_requested:
+            selected_id = await self._select_entry_tui(date, entries)
+            if self._exit_requested or selected_id is None:
                 break
             entry = entry_map.get(selected_id)
             if entry:
@@ -254,10 +253,11 @@ class MemoryBrowser:
                 instruction="(↑↓ 移动, Enter 查看详情, Esc 返回)",
             ).ask_async()
         except KeyboardInterrupt:
-            raise _BrowserExit()
+            self._exit_requested = True
+            return None
 
         if result is None:
-            raise _BrowserExit()
+            self._exit_requested = True
 
         return result
 
