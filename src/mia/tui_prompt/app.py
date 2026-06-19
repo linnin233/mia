@@ -401,6 +401,13 @@ class MiaTuiApp:
         await self.bus.subscribe("sender")
         await self.bus.subscribe("tui")
 
+        # Debug: 打开 trace 文件记录消息处理顺序
+        from pathlib import Path as _Path
+        _trace_dir = _Path(__file__).parent.parent.parent.parent / "logs"
+        _trace_dir.mkdir(parents=True, exist_ok=True)
+        self._trace_file = open(str(_trace_dir / "tui-trace.log"), "w", encoding="utf-8")
+        self._trace_seq = 0
+
         self._running = True
         while self._running:
             try:
@@ -408,10 +415,23 @@ class MiaTuiApp:
                 # 注意: 先轮询 tui 通道，确保思考过程在消息输出之前渲染
                 tui_msg = await self.bus.receive("tui", timeout=0.02)
                 if tui_msg:
+                    self._trace_seq += 1
+                    mt_val = tui_msg.msg_type.value
+                    title = tui_msg.payload.get("title", "")
+                    self._trace_file.write(
+                        f"[{self._trace_seq:04d}] TUI_CHAN {mt_val} | {title}\n"
+                    )
+                    self._trace_file.flush()
                     self._handle_tui_message(tui_msg)
 
                 sender_msg = await self.bus.receive("sender", timeout=0.02)
                 if sender_msg:
+                    self._trace_seq += 1
+                    mt_val = sender_msg.msg_type.value
+                    self._trace_file.write(
+                        f"[{self._trace_seq:04d}] SENDER_CHAN {mt_val}\n"
+                    )
+                    self._trace_file.flush()
                     self._handle_sender_message(sender_msg)
 
             except asyncio.CancelledError:
@@ -421,6 +441,11 @@ class MiaTuiApp:
 
         await self.bus.unsubscribe("sender")
         await self.bus.unsubscribe("tui")
+        # 关闭 trace 文件
+        try:
+            self._trace_file.close()
+        except Exception:
+            pass
 
     def _handle_sender_message(self, msg: Message) -> None:
         """处理 Sender 通道消息 (流式输出 / 文本回复)"""
