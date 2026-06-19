@@ -61,6 +61,22 @@ class DeepSeekConfig(BaseSettings):
     model_config = {"env_prefix": "DEEPSEEK_"}
 
 
+class WeChatConfig(BaseSettings):
+    """微信 iLink Bot 渠道配置
+
+    使用腾讯 iLink Bot API 接入微信个人号。
+    需要 QR 码扫码登录获取 bot_token。
+    """
+
+    enabled: bool = False                 # 是否启用微信渠道
+    bot_token: str = ""                   # iLink Bot token (空则自动 QR 码登录)
+    bot_token_file: str = ""              # Token 持久化文件路径 (默认 ~/.mia/wechat_bot_token)
+    base_url: str = "https://ilinkai.weixin.qq.com"  # iLink API 基础 URL
+    media_dir: str = ""                   # 媒体文件下载目录 (默认 ~/.mia/media)
+
+    model_config = {"env_prefix": "MIA_WECHAT_"}
+
+
 class AgentConfig(BaseSettings):
     """Agent 行为配置"""
 
@@ -94,6 +110,7 @@ class Config:
         self.mimo = MiMoConfig()
         self.deepseek = DeepSeekConfig()
         self.agent = AgentConfig()
+        self.wechat = WeChatConfig()
 
         # 确保工作目录存在
         Path(self.agent.workspace_dir).mkdir(parents=True, exist_ok=True)

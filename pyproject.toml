@@ -36,6 +36,11 @@ audio = [
     "numpy>=1.26.0",
 ]
 
+# 微信渠道 (可选 — AES 媒体加解密)
+wechat = [
+    "pycryptodome>=3.20.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mia"]
 

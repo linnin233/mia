@@ -149,17 +149,19 @@ def make_user_intent(
 def make_send_text(
     message: str,
     session_id: Optional[str] = None,
+    target: str = "sender",
 ) -> Message:
     """构建 SEND_TEXT 消息
 
     Args:
         message: 要发送给用户的文本内容
         session_id: 会话 ID
+        target: 目标 Agent 名称（默认 "sender"，多渠道时可指定其他目标）
     """
     return Message(
         msg_type=MessageType.SEND_TEXT,
         source="scheduler",
-        target="sender",
+        target=target,
         payload={"message": message},
         session_id=session_id,
     )
@@ -170,6 +172,7 @@ def make_send_voice(
     voice: str = "冰糖",
     audio_format: str = "wav",
     session_id: Optional[str] = None,
+    target: str = "sender",
 ) -> Message:
     """构建 SEND_VOICE 消息
 
@@ -178,11 +181,12 @@ def make_send_voice(
         voice: 音色 ID
         audio_format: 输出格式 (wav/pcm16)
         session_id: 会话 ID
+        target: 目标 Agent 名称（默认 "sender"，多渠道时可指定其他目标）
     """
     return Message(
         msg_type=MessageType.SEND_VOICE,
         source="scheduler",
-        target="sender",
+        target=target,
         payload={
             "message": message,
             "voice": voice,
@@ -275,32 +279,41 @@ def make_task_error(
 # ─── 流式消息工厂函数 ─────────────────────────────────
 
 
-def make_stream_start(session_id: Optional[str] = None) -> Message:
+def make_stream_start(
+    session_id: Optional[str] = None,
+    target: str = "sender",
+) -> Message:
     """构建 STREAM_START 消息 — 通知 Sender 准备接收流式文本
 
     Args:
         session_id: 会话 ID
+        target: 目标 Agent 名称（默认 "sender"，多渠道时可指定其他目标）
     """
     return Message(
         msg_type=MessageType.STREAM_START,
         source="scheduler",
-        target="sender",
+        target=target,
         payload={},
         session_id=session_id,
     )
 
 
-def make_stream_chunk(delta: str, session_id: Optional[str] = None) -> Message:
+def make_stream_chunk(
+    delta: str,
+    session_id: Optional[str] = None,
+    target: str = "sender",
+) -> Message:
     """构建 STREAM_CHUNK 消息 — 推送一个文本增量
 
     Args:
         delta: 增量文本 (LLM 流式输出的一个 chunk)
         session_id: 会话 ID
+        target: 目标 Agent 名称（默认 "sender"，多渠道时可指定其他目标）
     """
     return Message(
         msg_type=MessageType.STREAM_CHUNK,
         source="scheduler",
-        target="sender",
+        target=target,
         payload={"delta": delta},
         session_id=session_id,
     )
@@ -309,17 +322,19 @@ def make_stream_chunk(delta: str, session_id: Optional[str] = None) -> Message:
 def make_stream_end(
     full_message: str,
     session_id: Optional[str] = None,
+    target: str = "sender",
 ) -> Message:
     """构建 STREAM_END 消息 — 通知 Sender 流式文本已完成
 
     Args:
         full_message: 完整的回复文本 (供 MemoryAgent 存储)
         session_id: 会话 ID
+        target: 目标 Agent 名称（默认 "sender"，多渠道时可指定其他目标）
     """
     return Message(
         msg_type=MessageType.STREAM_END,
         source="scheduler",
-        target="sender",
+        target=target,
         payload={"message": full_message},
         session_id=session_id,
     )

@@ -40,6 +40,7 @@ from mia.agents.sender import SenderAgent
 from mia.agents.task import TaskAgent
 from mia.agents.memory import MemoryAgent
 from mia.memory.store import MemoryStore
+from mia.channels.wechat.agent import WeChatAgent
 
 
 def parse_args():
@@ -67,6 +68,10 @@ def parse_args():
         "--voice", "-v", type=str,
         help="语音文件路径 (配合 --query 使用)",
     )
+    parser.add_argument(
+        "--wechat", "-w", action="store_true",
+        help="启用微信通信渠道 (iLink Bot 长轮询 + QR 码登录)",
+    )
     return parser.parse_args()
 
 
@@ -75,6 +80,7 @@ async def run_agent_pipeline(
     image_path: Optional[str] = None,
     voice_path: Optional[str] = None,
     timeout: float = 180.0,
+    enable_wechat: bool = False,
 ) -> Optional[str]:
     """
     运行完整的 Agent 链路
@@ -84,6 +90,7 @@ async def run_agent_pipeline(
         image_path: 可选的图片路径
         voice_path: 可选的语音文件路径
         timeout: 整体超时秒数
+        enable_wechat: 是否启用微信通信渠道
 
     Returns:
         最终回复文本，超时返回 None
@@ -99,7 +106,12 @@ async def run_agent_pipeline(
     mimo = MiMoProvider(api_key=config.mimo.api_key)
     deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
 
-    # ─── 3. 创建所有 Agent ────────────────────────────
+    # ─── 3. 确定输出目标 ──────────────────────────────
+    output_targets = ["sender"]
+    if enable_wechat:
+        output_targets.append("wechat")
+
+    # ─── 4. 创建所有 Agent ────────────────────────────
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
@@ -108,6 +120,7 @@ async def run_agent_pipeline(
         fallback_provider=deepseek,  # 备选: DeepSeek
         fallback_model=config.deepseek.chat_model,
         enable_streaming=config.agent.enable_streaming,
+        output_targets=output_targets,  # 多渠道输出
     )
     sender = SenderAgent(
         bus=bus,
@@ -131,12 +144,26 @@ async def run_agent_pipeline(
         fallback_model=config.deepseek.chat_model,
     )
 
-    # ─── 4. 启动所有 Agent ───────────────────────────
+    # WeChatAgent — 微信通信渠道 (可选)
+    wechat_agent = None
+    if enable_wechat:
+        wechat_agent = WeChatAgent(
+            bus=bus,
+            bot_token=config.wechat.bot_token,
+            bot_token_file=config.wechat.bot_token_file,
+            base_url=config.wechat.base_url,
+            enabled=config.wechat.enabled or enable_wechat,
+            media_dir=config.wechat.media_dir,
+        )
+
+    # ─── 5. 启动所有 Agent ───────────────────────────
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent\033[0m")
     print(f"  Session: {session_id}")
     print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
     print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
+    if enable_wechat:
+        print(f"  WeChat: 已启用 (iLink Bot)")
     print(f"\033[1m{'='*50}\033[0m")
     print()
 
@@ -146,10 +173,15 @@ async def run_agent_pipeline(
     await scheduler.start()
     await sender.start()
     await task_agent.start()
+    if wechat_agent:
+        await wechat_agent.start()
 
     # 为每个 Agent 启动消息处理循环 (后台任务)
+    agents = [receiver, memory_agent, scheduler, sender, task_agent]
+    if wechat_agent:
+        agents.append(wechat_agent)
     tasks: list[asyncio.Task] = []
-    for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
+    for agent in agents:
         t = asyncio.create_task(agent.run())
         tasks.append(t)
 
@@ -210,7 +242,10 @@ async def run_agent_pipeline(
     finally:
         # ─── 7. 清理 ──────────────────────────────────
         # 停止所有 Agent
-        for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
+        cleanup_agents = [receiver, memory_agent, scheduler, sender, task_agent]
+        if wechat_agent:
+            cleanup_agents.append(wechat_agent)
+        for agent in cleanup_agents:
             await agent.stop()
 
         # 取消后台任务
@@ -227,12 +262,14 @@ async def run_cli_query(
     query: str,
     image_path: Optional[str] = None,
     voice_path: Optional[str] = None,
+    enable_wechat: bool = False,
 ) -> None:
     """运行单次 CLI 对话"""
     result = await run_agent_pipeline(
         query=query,
         image_path=image_path,
         voice_path=voice_path,
+        enable_wechat=enable_wechat,
     )
 
     if result:
@@ -268,11 +305,19 @@ async def _handle_compact(memory_agent: MemoryAgent) -> None:
     print()
 
 
-async def run_cli_interactive() -> None:
-    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)"""
+async def run_cli_interactive(enable_wechat: bool = False) -> None:
+    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)
+
+    Args:
+        enable_wechat: 是否启用微信通信渠道（同时服务 CLI 和微信用户）
+    """
     print(f"\033[1mMIA v0.1.0 — 交互模式\033[0m")
+    features = []
+    if enable_wechat:
+        features.append("微信渠道")
+    feature_str = f" ({', '.join(features)})" if features else ""
     print(f"  输入 '/quit' 退出, '/help' 查看帮助, '/compact' 压缩对话历史")
-    print(f"  直接输入问题开始对话")
+    print(f"  直接输入问题开始对话{feature_str}")
     print()
 
     # ══════════════════════════════════════════════════════
@@ -300,6 +345,11 @@ async def run_cli_interactive() -> None:
     mimo = MiMoProvider(api_key=config.mimo.api_key)
     deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
 
+    # ─── 确定输出目标 ──────────────────────────────
+    output_targets = ["sender"]
+    if enable_wechat:
+        output_targets.append("wechat")
+
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
@@ -308,6 +358,7 @@ async def run_cli_interactive() -> None:
         fallback_provider=deepseek,
         fallback_model=config.deepseek.chat_model,
         enable_streaming=config.agent.enable_streaming,
+        output_targets=output_targets,  # 多渠道输出
     )
     sender = SenderAgent(
         bus=bus,
@@ -329,12 +380,26 @@ async def run_cli_interactive() -> None:
         fallback_model=config.deepseek.chat_model,
     )
 
+    # WeChatAgent — 微信通信渠道 (可选)
+    wechat_agent = None
+    if enable_wechat:
+        wechat_agent = WeChatAgent(
+            bus=bus,
+            bot_token=config.wechat.bot_token,
+            bot_token_file=config.wechat.bot_token_file,
+            base_url=config.wechat.base_url,
+            enabled=True,
+            media_dir=config.wechat.media_dir,
+        )
+
     # 启动所有 Agent
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent (持久模式)\033[0m")
     print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
     print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
     print(f"  记忆: MemoryAgent @ {memory_agent.store.file_path}/ (index+daily)")
+    if enable_wechat:
+        print(f"  微信: 已启用 (iLink Bot 长轮询) {'(有 token)' if config.wechat.bot_token else '(需 QR 码登录)'}")
     print(f"\033[1m{'='*50}\033[0m")
     print()
 
@@ -343,10 +408,15 @@ async def run_cli_interactive() -> None:
     await scheduler.start()
     await sender.start()
     await task_agent.start()
+    if wechat_agent:
+        await wechat_agent.start()
 
     # 后台消息处理循环 (持久运行)
+    agent_list = [receiver, memory_agent, scheduler, sender, task_agent]
+    if wechat_agent:
+        agent_list.append(wechat_agent)
     tasks: list[asyncio.Task] = []
-    for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
+    for agent in agent_list:
         tasks.append(asyncio.create_task(agent.run()))
 
     await asyncio.sleep(0.3)
@@ -552,7 +622,10 @@ async def run_cli_interactive() -> None:
     finally:
         # ─── 清理 — 退出时执行一次 ─────────────────
         print("\n\033[90m正在关闭 Agent 系统...\033[0m")
-        for agent in [receiver, memory_agent, scheduler, sender, task_agent]:
+        cleanup_agents = [receiver, memory_agent, scheduler, sender, task_agent]
+        if wechat_agent:
+            cleanup_agents.append(wechat_agent)
+        for agent in cleanup_agents:
             await agent.stop()
         for t in tasks:
             t.cancel()
@@ -618,9 +691,12 @@ def main():
     if args.server:
         asyncio.run(run_server(args.port))
     elif args.query:
-        asyncio.run(run_cli_query(args.query, args.image, args.voice))
+        asyncio.run(run_cli_query(
+            args.query, args.image, args.voice,
+            enable_wechat=args.wechat,
+        ))
     else:
-        asyncio.run(run_cli_interactive())
+        asyncio.run(run_cli_interactive(enable_wechat=args.wechat))
 
 
 if __name__ == "__main__":
