@@ -19,29 +19,6 @@ Screen {
     color: #c0caf5;
 }
 
-/* 隐藏 Textual 默认 footer (我们用自己的状态栏) */
-Footer {
-    display: none;
-}
-
-/* ─── 状态栏 ───────────────────────────────────────── */
-
-#status-bar {
-    dock: top;
-    height: 1;
-    background: #16161e;
-    color: #565f89;
-    padding: 0 1;
-}
-
-#status-bar .key {
-    color: #7aa2f7;
-}
-
-#status-bar .value {
-    color: #c0caf5;
-}
-
 /* ─── 聊天历史 ─────────────────────────────────────── */
 
 #chat-history {
@@ -57,11 +34,10 @@ Footer {
 MessageBubble {
     margin: 0 0 1 0;
     padding: 1 2;
-    border-left: solid 3px;
 }
 
 MessageBubble.user {
-    border-left: solid 3px #7aa2f7;
+    border-left: solid #7aa2f7;
 }
 
 MessageBubble.user .role-label {
@@ -70,7 +46,7 @@ MessageBubble.user .role-label {
 }
 
 MessageBubble.assistant {
-    border-left: solid 3px #9ece6a;
+    border-left: solid #9ece6a;
 }
 
 MessageBubble.assistant .role-label {
@@ -88,7 +64,7 @@ MessageBubble .content {
 ThoughtSection {
     margin: 0 0 1 2;
     padding: 0 1;
-    border-left: dashed 2px #7dcfff;
+    border-left: dashed #7dcfff;
     color: #7dcfff;
     height: auto;
 }
@@ -109,7 +85,7 @@ ThoughtSection .detail {
 ToolCallSection {
     margin: 0 0 1 2;
     padding: 0 1;
-    border-left: dashed 2px #e0af68;
+    border-left: dashed #e0af68;
     color: #e0af68;
     height: auto;
 }
@@ -126,11 +102,11 @@ ToolCallSection .detail {
 }
 
 ToolCallSection.success {
-    border-left: solid 2px #9ece6a;
+    border-left: solid #9ece6a;
 }
 
 ToolCallSection.error {
-    border-left: solid 2px #f7768e;
+    border-left: solid #f7768e;
 }
 
 /* ─── 流式文本 ─────────────────────────────────────── */
@@ -200,10 +176,10 @@ StreamingText .prefix {
     color: #1a1b26;
 }
 
-/* ─── 分隔线 ───────────────────────────────────────── */
+/* ─── 系统消息 ─────────────────────────────────────── */
 
-.separator {
-    color: #3b4261;
-    height: 1;
+.system-message {
+    color: #565f89;
     margin: 0 0 1 0;
+    padding: 0 2;
 }
