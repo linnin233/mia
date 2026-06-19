@@ -99,6 +99,10 @@ class MiaTuiApp:
         # style_key: "user" | "mia" | "thought" | "tool" | "system" | "error"
         self._messages: list[tuple[str, str]] = []
 
+        # ─── 虚拟滚动 ──────────────────────────────────
+        self._scroll_offset = 0       # 0=底部, >0=向上滚动行数
+        self._max_visible_lines = 50  # 默认可见行数
+
         # ─── 流式状态 ──────────────────────────────────
         self._stream_buffer: str = ""
         self._stream_index: Optional[int] = None  # 流式消息在列表中的索引
@@ -222,44 +226,33 @@ class MiaTuiApp:
             except Exception:
                 pass
 
-        # ─── 滚动快捷键 ──────────────────────────────
-        output_win = self._output_window  # 闭包捕获
+        # ─── 滚动快捷键 (虚拟滚动: 调整 _scroll_offset) ──
+        app_ref = self  # 闭包捕获
 
         @kb.add("c-up")
         def _(event):
-            """Ctrl+Up: 向上滚动输出区域"""
-            try:
-                if output_win.render_info:
-                    output_win.render_info.window_scroll_up(output_win, 3)
-            except Exception:
-                pass
+            """Ctrl+Up: 向上滚动"""
+            app_ref._scroll_offset += 3
+            app_ref._invalidate()
 
         @kb.add("c-down")
         def _(event):
-            """Ctrl+Down: 向下滚动输出区域"""
-            try:
-                if output_win.render_info:
-                    output_win.render_info.window_scroll_down(output_win, 3)
-            except Exception:
-                pass
+            """Ctrl+Down: 向下滚动 / 回到底部"""
+            app_ref._scroll_offset = max(0, app_ref._scroll_offset - 3)
+            app_ref._invalidate()
 
-        @kb.add("escape", "c-up")
+        @kb.add("c-home")
         def _(event):
-            """Esc+Ctrl+Up: 跳到最顶部"""
-            try:
-                if output_win.render_info:
-                    output_win.render_info.window_scroll_up(output_win, 99999)
-            except Exception:
-                pass
+            """Ctrl+Home: 跳到最顶部"""
+            total = sum(1 + t.count("\n") for _, t in app_ref._messages)
+            app_ref._scroll_offset = max(0, total - app_ref._max_visible_lines)
+            app_ref._invalidate()
 
-        @kb.add("escape", "c-down")
+        @kb.add("c-end")
         def _(event):
-            """Esc+Ctrl+Down: 跳到最底部"""
-            try:
-                if output_win.render_info:
-                    output_win.render_info.window_scroll_down(output_win, 99999)
-            except Exception:
-                pass
+            """Ctrl+End: 回到底部 (最新消息)"""
+            app_ref._scroll_offset = 0
+            app_ref._invalidate()
 
         return kb
 
@@ -270,15 +263,43 @@ class MiaTuiApp:
     def _render_messages(self) -> FormattedText:
         """渲染消息列表为 FormattedText (prompt_toolkit 回调)
 
-        每次 UI 刷新时调用，遍历消息列表生成带样式的格式化文本。
+        虚拟滚动: _scroll_offset > 0 时跳过末尾 N 行渲染，
+        模拟向上滚动的效果。Ctrl+Up/Down 调整 _scroll_offset。
         """
         parts = []
+        # 计算总行数 (每条消息可能有换行)
+        total_lines = sum(1 + t.count("\n") for _, t in self._messages)
+
+        # 如果当前可见行数不足，扩大
+        visible = max(20, self._max_visible_lines)
+
+        # 更新 max_visible_lines (用于滚动计算)
+        if total_lines > self._max_visible_lines:
+            self._max_visible_lines = max(self._max_visible_lines, total_lines)
+
+        # 计算渲染范围: 如果 scroll_offset > 0，从末尾倒推
+        skip_from_end = min(self._scroll_offset, max(0, total_lines - visible))
+        start_line = max(0, total_lines - visible - skip_from_end)
+
+        # 逐条渲染，跟踪当前行号
+        current_line = 0
         for style_key, text in self._messages:
-            # 根据 style_key 获取对应的 CSS class
-            style_class = STYLE_CLASSES.get(style_key, "")
-            # 每行文本作为一个独立的格式化片段
-            parts.append((style_class, text))
+            line_count = 1 + text.count("\n")
+            end_line = current_line + line_count
+
+            # 检查此消息是否在可见范围内
+            if end_line > start_line:
+                style_class = STYLE_CLASSES.get(style_key, "")
+                parts.append((style_class, text))
+                parts.append(("", "\n"))
+
+            current_line = end_line
+
+        # 滚动指示器
+        if self._scroll_offset > 0:
+            parts.append(("class:system", f"── 已上滚 {self._scroll_offset} 行 (Ctrl+Down 回到底部) ──"))
             parts.append(("", "\n"))
+
         return FormattedText(parts)
 
     # ══════════════════════════════════════════════════════
@@ -289,6 +310,7 @@ class MiaTuiApp:
         """添加一条消息到列表"""
         self._messages.append((style, text))
         self._trim_messages()
+        self._scroll_offset = 0  # 新消息 → 自动滚到底部
         self._invalidate()
 
     def _add_stream_start(self) -> None:
@@ -307,6 +329,7 @@ class MiaTuiApp:
                     "mia",
                     f"MIA: {self._stream_buffer}",
                 )
+            self._scroll_offset = 0  # 流式输出时保持底部
             self._invalidate()
 
     def _end_stream(self) -> None:
