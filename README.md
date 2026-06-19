@@ -7,30 +7,16 @@
 ## 架构
 
 ```
-                    ┌──────────┐
-                    │  微信用户  │
-                    └────┬─────┘
-                         │ iLink API
-                         ▼
-                  WeChatAgent          ── 微信通信渠道 (长轮询 + QR 码登录)
-                    │
-User Input          │
-  │                 │
-  ▼                 ▼
-ReceiverAgent          ── 多模态理解 (文本/图片/语音)
-  │
-  ▼
-MemoryAgent            ── 两级知识记忆 + 对话历史注入
-  │  ├─ Level 1: 每轮实时提取原子知识 (内存)
-  │  └─ Level 2: 换日/compact 合并去重持久化 (磁盘)
-  │
-  ▼
-SchedulerAgent         ── LLM 决策循环 (plan → execute → observe → reply)
-  │                         按 session_id 渠道路由回复 (CLI→终端, 微信→微信)
-  ├── TaskAgent        ── 工具调用 (天气/搜索/代码执行...)
-  │
-  └── SenderAgent      ── 终端输出 (文本/流式/语音播放)
+CLI / API / 微信 ──▶ Receiver ──▶ Memory ──▶ Scheduler ──┬──▶ Sender ──▶ 终端
+                  (多模态)     (记忆检索)    (LLM 决策)    │   (文本/语音)
+                                                         │
+                                                         ├──▶ TaskAgent
+                                                         │    (工具执行)
+                                                         │
+                                                         └──▶ WeChatAgent ──▶ 微信
+                                                              (渠道感知路由)
 ```
+6 个 Agent，1 条 **MessageBus**。消息从哪来回哪去。
 
 ## 特性
 
