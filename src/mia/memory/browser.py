@@ -48,7 +48,7 @@ class MemoryBrowser:
     纯只读，不修改 MemoryStore。
     """
 
-    DISPLAY_DAYS = 30  # Level 1 最多展示的天数
+    PAGE_SIZE = 10  # 每页显示条目数
 
     def __init__(
         self,
@@ -64,6 +64,8 @@ class MemoryBrowser:
         self.working_entries: list[KnowledgeEntry] = working_entries or []
         self._use_tui = True
         self._exit_requested = False  # 退出信号 (跨多层循环)
+        self._all_entries: list[KnowledgeEntry] = []  # 全量加载的条目
+        self._id_map: dict[str, KnowledgeEntry] = {}   # id → entry
 
     # ═══════════════════════════════════════════════════════
     # 公开 API
@@ -112,164 +114,108 @@ class MemoryBrowser:
     # ═══════════════════════════════════════════════════════
 
     async def _browse_tui(self) -> None:
-        """TUI 模式: 临时记忆 → 日期列表 → 条目列表 → 详情 (循环)
+        """TUI 模式: 全量加载 → 分页展示 → 详情
 
-        先打印临时记忆列表，再进入持久知识的日期选择。
+        1. 一次性加载所有日期的知识条目
+        2. 打印临时记忆列表
+        3. 分页展示 (10条/页)，支持翻页
+        4. 选择条目查看完整详情
         """
         import questionary
 
-        # ─── 1. 展示临时记忆 (如有) ─────────────────
+        # ─── 1. 全量加载所有持久知识 ─────────────────
+        self._all_entries = self.store.get_all()
+        self._id_map = {e.id: e for e in self._all_entries}
+        total_persistent = len(self._all_entries)
+        total_working = len(self.working_entries)
+
+        # ─── 2. 展示临时记忆 ─────────────────────────
         if self.working_entries:
-            print(f"  \033[33m临时记忆\033[0m ({len(self.working_entries)}条) \033[90m— 待持久化，低置信度\033[0m")
+            print(f"\n  \033[33m临时记忆\033[0m ({total_working}条) \033[90m— 待持久化，低置信度\033[0m")
             for i, entry in enumerate(self.working_entries):
-                cat_label = entry.category_label
-                preview = entry.content.replace("\n", " ")[:70]
-                if len(entry.content) > 70:
+                cat = entry.category_label
+                preview = entry.content.replace("\n", " ")[:120]
+                if len(entry.content) > 120:
                     preview += "..."
-                conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"
-                tag = " \033[93m[临时]\033[0m" if entry.confidence <= 0.5 else ""
-                print(f"    \033[90m[{i+1}]\033[0m {cat_label} {preview} {conf_str}{tag}")
+                print(f"    \033[90m[T{i+1}]\033[0m {cat} {preview} \033[90m({entry.confidence:.1f})\033[0m \033[93m[临时]\033[0m")
             print()
 
-        # ─── 2. 持久知识 TUI 导航 ────────────────────
-        index = self.store.get_index_summaries()
-        if not index:
-            print("  \033[90m持久知识为空。\033[0m")
+        if total_persistent == 0 and total_working == 0:
+            print("  \033[90m知识库为空。\033[0m")
+            return
+        if total_persistent == 0:
+            print("  \033[90m持久知识为空。按 Enter 退出。\033[0m")
             return
 
-        # 只有 1 天: 跳过日期选择，直接进条目列表
-        if len(index) == 1:
-            date = list(index.keys())[0]
-            await self._browse_entries_tui(date)
-            return
-
-        # 正常流程: 日期 → 条目 → 详情
-        while not self._exit_requested:
-            date = await self._select_date_tui(index)
-            if self._exit_requested or date is None:
-                break
-            await self._browse_entries_tui(date)
-
-    async def _select_date_tui(self, index: dict) -> Optional[str]:
-        """Level 1 — questionary.select 日期候选框"""
-        import questionary
-
-        choices = []
-        for date, ds in list(index.items())[:self.DISPLAY_DAYS]:
-            # 构造选择项: "2026-06-19 (6条) — 日摘要..."
-            label = f"{date}  ({ds.entry_count}条)"
-            if ds.daily_summary:
-                summary_preview = ds.daily_summary[:50]
-                label += f" — {summary_preview}"
-            # 类别分布
-            if ds.category_distribution:
-                cat_parts = []
-                for cat, count in sorted(ds.category_distribution.items()):
-                    cat_label = CATEGORY_LABELS.get(cat, f"[{cat}]")
-                    cat_parts.append(f"{cat_label}×{count}")
-                if cat_parts:
-                    label += f"  \033[90m{' '.join(cat_parts)}\033[0m"
-            choices.append(questionary.Choice(title=label, value=date))
-
-        # 使用 sentinel 字符串避免 questionary 在 Windows 下 None 值异常
-        choices.append(questionary.Choice(
-            title="[返回] 退出浏览器",
-            value="__EXIT_BROWSER__",
-        ))
-
-        total = self.store.get_total_count()
-        message = f"知识浏览 — {len(index)} 天, {total} 条知识  选择日期:"
-
-        try:
-            result = await questionary.select(
-                message,
-                choices=choices,
-                use_indicator=True,
-                qmark=">",
-                instruction="(↑↓ 移动, Enter 选择, Esc 退出)",
-            ).ask_async()
-        except (KeyboardInterrupt, EOFError, Exception) as e:
-            logger.debug("[MemoryBrowser] 日期选择退出: {}", type(e).__name__)
-            self._exit_requested = True
-            return None
-
-        if result is None or result == "__EXIT_BROWSER__":
-            self._exit_requested = True
-
-        return result
-
-    async def _browse_entries_tui(self, date: str) -> None:
-        """浏览某天的条目 — 条目列表 + 详情循环"""
-        entries = self.store.load_day(date)
-        if not entries:
-            print(f"  \033[90m{date} 无知识条目。\033[0m")
-            return
-
-        # 构建 id → entry 映射 (修复 questionary value 序列化问题)
-        entry_map: dict[str, KnowledgeEntry] = {e.id: e for e in entries}
+        # ─── 3. 分页浏览持久知识 ─────────────────────
+        total_pages = (total_persistent + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        current_page = 0  # 0-indexed
 
         while not self._exit_requested:
-            selected_id = await self._select_entry_tui(date, entries)
-            if self._exit_requested or selected_id is None:
+            # 当前页的条目
+            start = current_page * self.PAGE_SIZE
+            end = min(start + self.PAGE_SIZE, total_persistent)
+            page_entries = self._all_entries[start:end]
+
+            choices = []
+            for i, entry in enumerate(page_entries):
+                cat = entry.category_label
+                preview = entry.content.replace("\n", " ")[:120]
+                if len(entry.content) > 120:
+                    preview += "..."
+                label = f"{i+1:2d}. {cat} {preview}"
+                choices.append(questionary.Choice(title=label, value=entry.id))
+
+            # 翻页选项
+            nav_choices = []
+            if current_page > 0:
+                nav_choices.append(questionary.Choice(
+                    title="← 上一页", value="__PREV__",
+                ))
+            if current_page < total_pages - 1:
+                nav_choices.append(questionary.Choice(
+                    title="→ 下一页", value="__NEXT__",
+                ))
+            if nav_choices:
+                choices.append(questionary.Separator("─" * 40))
+                choices.extend(nav_choices)
+
+            choices.append(questionary.Separator())
+            choices.append(questionary.Choice(
+                title="[退出] 关闭浏览器",
+                value="__EXIT__",
+            ))
+
+            message = (
+                f"持久知识 — 第{current_page+1}/{total_pages}页 "
+                f"({start+1}-{end}条, 共{total_persistent}条)  选择:"
+            )
+
+            try:
+                result = await questionary.select(
+                    message,
+                    choices=choices,
+                    use_indicator=True,
+                    qmark=">",
+                    instruction="(↑↓ 移动, Enter 选择, ←→ 翻页, Esc 退出)",
+                ).ask_async()
+            except (KeyboardInterrupt, EOFError, Exception) as e:
+                logger.debug("[MemoryBrowser] 选择退出: {}", type(e).__name__)
+                self._exit_requested = True
                 break
-            entry = entry_map.get(selected_id)
-            if entry:
-                await self._show_detail_tui(entry)
 
-    async def _select_entry_tui(
-        self, date: str, entries: list[KnowledgeEntry],
-    ) -> Optional[str]:
-        """Level 2 — questionary.select 知识条目候选框
-
-        修复: 使用 entry.id (str) 作为 choice value，避免 questionary
-        将 MemoryEntry/KnowledgeEntry 对象序列化为字符串导致的
-        'str' object has no attribute 'id' 错误。
-
-        Returns:
-            选中的 entry.id (str)，或 None (返回上一级)
-        """
-        import questionary
-
-        choices = []
-        for entry in entries:
-            cat_label = entry.category_label
-            # 内容预览: 单行，截断到 70 字
-            preview = entry.content.replace("\n", " ")[:70]
-            if len(entry.content) > 70:
-                preview += "..."
-            label = f"{cat_label} {preview}"
-            # 使用 entry.id (str) 作为 value，不是 entry 对象
-            choices.append(questionary.Choice(title=label, value=entry.id))
-
-        # 使用 sentinel 字符串避免 questionary 在 Windows 下 None 值异常
-        choices.append(questionary.Choice(
-            title="[返回] 上一级",
-            value="__EXIT_ENTRIES__",
-        ))
-
-        try:
-            result = await questionary.select(
-                f"{date} — {len(entries)} 条知识  选择条目:",
-                choices=choices,
-                use_indicator=True,
-                qmark=">",
-                instruction="(↑↓ 移动, Enter 查看详情, Esc 返回)",
-            ).ask_async()
-        except (KeyboardInterrupt, EOFError, Exception) as e:
-            logger.debug("[MemoryBrowser] 条目选择退出: {}", type(e).__name__)
-            self._exit_requested = True
-            return None
-
-        # "[返回] 上一级": 只退出当前条目循环，不清除 _exit_requested
-        # (让外层日期选择循环继续运行)
-        if result is None:
-            # Esc 键: 返回上一级 (不退出)
-            return None
-        if result == "__EXIT_ENTRIES__":
-            # 明确选择 [返回]: 返回上一级
-            return None
-
-        return result
+            if result is None or result == "__EXIT__":
+                self._exit_requested = True
+                break
+            elif result == "__PREV__":
+                current_page = max(0, current_page - 1)
+            elif result == "__NEXT__":
+                current_page = min(total_pages - 1, current_page + 1)
+            else:
+                # 选中了条目 → 查看详情
+                entry = self._id_map.get(result)
+                if entry:
+                    await self._show_detail_tui(entry)
 
     async def _show_detail_tui(self, entry: KnowledgeEntry) -> None:
         """Level 3 — rich.Table 展示完整知识详情 (9 个字段)"""
@@ -325,106 +271,76 @@ class MemoryBrowser:
     # ═══════════════════════════════════════════════════════
 
     async def _browse_flat(self) -> None:
-        """Flat 模式: 先展示临时记忆，再按日期展示持久知识
-
-        临时记忆 (working memory) 展示在最上方，标记为 [临时]。
-        用户可输入序号查看完整详情（Level 3）。
-        """
+        """Flat 模式: 全量加载 → 分页打印 → 交互查看详情"""
         interactive = _is_interactive()
         loop = asyncio.get_event_loop()
-        persistent_total = self.store.get_total_count()
+
+        # 全量加载
+        all_persistent = self.store.get_all()
+        persistent_total = len(all_persistent)
         working_total = len(self.working_entries)
         total = persistent_total + working_total
 
-        print(f"\n  \033[90m知识库: {working_total} 条临时 + {persistent_total} 条持久, 共 {total} 条\033[0m")
-        print(f"  \033[90m输入序号查看详情 | Enter 下一组 | q 退出\033[0m")
-        print()
+        print(f"\n  \033[90m知识库: {working_total}临时 + {persistent_total}持久, 共{total}条\033[0m")
+        print(f"  \033[90m输入序号查看详情 | n=下一页 p=上一页 | q=退出\033[0m\n")
 
-        # ─── 构建全局序号映射 (临时记忆 + 持久知识) ──
-        # 临时记忆在前，持久知识在后
-        all_entries: list[tuple[str, KnowledgeEntry]] = []
-
-        # 临时记忆
-        for entry in self.working_entries:
-            all_entries.append(("working", entry))
-
-        # 持久知识
-        for entry in self.store.get_all():
-            all_entries.append(("persistent", entry))
-
-        if not all_entries:
-            print("  \033[90m知识库为空。\033[0m")
+        if total == 0:
+            print("  \033[90m知识库为空。\033[0m\n")
             return
 
-        # 构建序号 → entry 映射
-        entry_by_index: dict[int, KnowledgeEntry] = {}
-        for i, (source, entry) in enumerate(all_entries):
-            entry_by_index[i + 1] = entry
+        all_entries: list[KnowledgeEntry] = (
+            list(self.working_entries) + all_persistent
+        )
+        total_pages = (total + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        page = 0
 
-        # ─── 展示临时记忆 ───────────────────────
-        if self.working_entries:
-            print(f"  \033[33m临时记忆\033[0m ({working_total}条) \033[90m— 待持久化，低置信度\033[0m")
-            for i, entry in enumerate(self.working_entries):
-                cat_label = entry.category_label
-                preview = entry.content.replace("\n", " ")[:200]
-                if len(entry.content) > 80:
+        while page < total_pages:
+            start = page * self.PAGE_SIZE
+            end = min(start + self.PAGE_SIZE, total)
+            print(f"  \033[1m── 第{page+1}/{total_pages}页 ({start+1}-{end}条) ──\033[0m")
+
+            for i in range(start, end):
+                entry = all_entries[i]
+                idx = i + 1
+                cat = entry.category_label
+                preview = entry.content.replace("\n", " ")[:150]
+                if len(entry.content) > 150:
                     preview += "..."
-                conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"
-                global_idx = i + 1  # 临时记忆从 1 开始
-                tag = " \033[93m[临时]\033[0m" if entry.confidence <= 0.5 else ""
-                print(f"    \033[90m[{global_idx}]\033[0m {cat_label} {preview} {conf_str}{tag}")
+                is_temp = i < working_total
+                tag = " \033[93m[临时]\033[0m" if is_temp else ""
+                print(f"  \033[90m[{idx}]\033[0m {cat} {preview} \033[90m({entry.confidence:.1f})\033[0m{tag}")
+
             print()
+            if not interactive:
+                page += 1
+                continue
 
-        # ─── 展示持久知识 (按日期分组) ────────
-        index = self.store.get_index_summaries()
-        idx_offset = working_total  # 持久条目序号从 working_total+1 开始
-
-        if index:
-            for date, ds in list(index.items())[:self.DISPLAY_DAYS]:
-                summary_hint = f" — {ds.daily_summary}" if ds.daily_summary else ""
-                print(f"  \033[33m{date}\033[0m ({ds.entry_count}条){summary_hint}")
-
-                entries = self.store.load_day(date)
-                for i, entry in enumerate(entries):
-                    global_idx = idx_offset + i + 1
-                    cat_label = entry.category_label
-                    preview = entry.content.replace("\n", " ")[:200]
-                    if len(entry.content) > 80:
-                        preview += "..."
-                    conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"
-                    print(f"    \033[90m[{global_idx}]\033[0m {cat_label} {preview} {conf_str}")
-                idx_offset += len(entries)
-        elif not self.working_entries:
-            print("  \033[90m持久知识为空。\033[0m")
-
-        # ─── 交互循环: 查看详情 ─────────────────
-        if not interactive:
-            print()
-            return
-
-        while True:
-            print()
             try:
                 user_input = await loop.run_in_executor(
                     None, input,
-                    f"  \033[36m序号 (1-{len(all_entries)}) / Enter 退出 / q 退出 > \033[0m",
+                    f"  \033[36m序号/n下一页/p上一页/q退出 > \033[0m",
                 )
             except (EOFError, OSError):
                 break
 
             user_input = user_input.strip().lower()
-            if user_input == "" or user_input == "q":
+            if user_input in ("", "q"):
                 break
+            if user_input == "n":
+                page = min(page + 1, total_pages - 1)
+                continue
+            if user_input == "p":
+                page = max(page - 1, 0)
+                continue
 
             try:
                 idx = int(user_input)
-                entry = entry_by_index.get(idx)
-                if entry:
-                    self._show_detail_plain(entry)
+                if 1 <= idx <= total:
+                    self._show_detail_plain(all_entries[idx - 1])
                 else:
-                    print(f"  \033[90m无效序号: {idx}，范围 1-{len(all_entries)}\033[0m")
+                    print(f"  \033[90m无效序号: {idx}，范围 1-{total}\033[0m")
             except ValueError:
-                print(f"  \033[90m无效输入: '{user_input}'，输入数字、Enter 或 q\033[0m")
+                print(f"  \033[90m无效输入: '{user_input}'\033[0m")
 
         print()
 
