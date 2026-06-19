@@ -1,19 +1,73 @@
 {
   "date": "2026-06-19",
-  "updated": "2026-06-19T14:58:51.761526+08:00",
+  "updated": "2026-06-19T03:00:00+08:00",
   "entries": [
     {
-      "id": "f6b7942eae23",
-      "content": "用户linnin233偏好中文技术交流，正在使用Python+asyncio开发多Agent系统MIA。工作环境为Windows 11 + Git Bash/PowerShell，Python 3.12。已决定采用prompt_toolkit作为TUI框架，需显示完整调用链（Receiver→Memory→Scheduler→Sender），且LLM推理结果需优先于回复展示。记忆系统为Level1临时与Level2持久两级设计。待办事项包括添加Web搜索、天气查询、Shell执行和文件读写四个工具。",
+      "id": "c79a95a511fa",
+      "content": "用户的名字是linnin233",
       "category": "insight",
-      "confidence": 0.5,
+      "confidence": 0.8,
       "keywords": [
-        "摘要"
+        "linnin233",
+        "名字"
       ],
       "importance": 1.0,
-      "source_sessions": [],
-      "created_at": "2026-06-19T14:58:51.761526+08:00",
-      "updated_at": "2026-06-19T14:58:51.761526+08:00"
+      "source_sessions": [
+        "s6"
+      ],
+      "created_at": "2026-06-19T02:24:00+08:00",
+      "updated_at": "2026-06-19T02:24:00+08:00"
+    },
+    {
+      "id": "659ed526a7c0",
+      "content": "希望TUI界面显示完整Agent调用链Receiver→Memory→Scheduler→Sender",
+      "category": "preference",
+      "confidence": 0.8,
+      "keywords": [
+        "TUI",
+        "调用链",
+        "Agent"
+      ],
+      "importance": 0.8,
+      "source_sessions": [
+        "s7"
+      ],
+      "created_at": "2026-06-19T02:30:00+08:00",
+      "updated_at": "2026-06-19T02:30:00+08:00"
+    },
+    {
+      "id": "54cfd925f7b0",
+      "content": "Scheduler的LLM推理需显示在MIA回复之前，消息顺序很重要",
+      "category": "insight",
+      "confidence": 0.7,
+      "keywords": [
+        "Scheduler",
+        "推理",
+        "顺序"
+      ],
+      "importance": 0.7,
+      "source_sessions": [
+        "s8"
+      ],
+      "created_at": "2026-06-19T02:35:00+08:00",
+      "updated_at": "2026-06-19T02:35:00+08:00"
+    },
+    {
+      "id": "fb71081d4ad9",
+      "content": "记忆系统采用两级梯度设计Level1临时记忆+Level2持久知识",
+      "category": "fact",
+      "confidence": 0.9,
+      "keywords": [
+        "记忆",
+        "MemoryAgent",
+        "设计"
+      ],
+      "importance": 0.7,
+      "source_sessions": [
+        "s9"
+      ],
+      "created_at": "2026-06-19T03:00:00+08:00",
+      "updated_at": "2026-06-19T03:00:00+08:00"
     }
   ]
 }

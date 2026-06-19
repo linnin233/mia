@@ -4,14 +4,40 @@
   "days": {
     "2026-06-19": {
       "file": "daily/2026-06-19.json",
-      "entry_count": 1,
+      "entry_count": 4,
       "daily_summary": "",
       "keywords": [
-        "摘要"
+        "linnin233",
+        "TUI",
+        "调用链",
+        "记忆",
+        "Agent",
+        "Scheduler"
       ],
-      "importance": 1.0,
+      "importance": 0.8,
       "category_distribution": {
-        "insight": 1
+        "insight": 2,
+        "preference": 1,
+        "fact": 1
+      }
+    },
+    "2026-06-18": {
+      "file": "daily/2026-06-18.json",
+      "entry_count": 5,
+      "daily_summary": "",
+      "keywords": [
+        "中文",
+        "MIA",
+        "TUI",
+        "工具",
+        "Python"
+      ],
+      "importance": 0.74,
+      "category_distribution": {
+        "fact": 2,
+        "preference": 1,
+        "decision": 1,
+        "task": 1
       }
     }
   }
