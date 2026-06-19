@@ -3,92 +3,87 @@
   "updated": "2026-06-18T22:30:00+08:00",
   "entries": [
     {
-      "id": "8ad343cd92fe",
-      "content": "用户偏好使用中文进行技术交流，不喜欢中英混杂的回复风格",
+      "id": "c1f812af478c",
+      "content": "用户偏好使用中文进行技术交流，不喜欢中英混杂",
       "category": "preference",
       "confidence": 0.8,
       "keywords": [
         "中文",
         "偏好",
-        "技术交流",
-        "回复风格"
+        "技术交流"
       ],
       "importance": 0.9,
       "source_sessions": [
-        "a1b2c3d4e5f6"
+        "s1"
       ],
       "created_at": "2026-06-18T10:15:00+08:00",
       "updated_at": "2026-06-18T10:15:00+08:00"
     },
     {
-      "id": "7fa6d942e87d",
-      "content": "用户正在开发一个名为MIA的多Agent系统，技术栈为Python+asyncio",
+      "id": "3c770096dea8",
+      "content": "用户正在开发名为MIA的多Agent系统，技术栈Python+asyncio",
       "category": "fact",
       "confidence": 0.9,
       "keywords": [
         "MIA",
-        "多Agent",
         "Python",
         "asyncio"
       ],
       "importance": 0.8,
       "source_sessions": [
-        "b2c3d4e5f6a7"
+        "s2"
       ],
       "created_at": "2026-06-18T14:20:00+08:00",
       "updated_at": "2026-06-18T14:20:00+08:00"
     },
     {
-      "id": "d9b9a2f18006",
-      "content": "用户决定使用prompt_toolkit替代Textual作为TUI框架，因为Textual在Windows终端兼容性差",
+      "id": "3b120e7b54e5",
+      "content": "决定使用prompt_toolkit替代Textual作为TUI框架",
       "category": "decision",
       "confidence": 0.9,
       "keywords": [
         "prompt_toolkit",
-        "Textual",
         "TUI",
-        "框架选择"
+        "框架"
       ],
       "importance": 0.7,
       "source_sessions": [
-        "c3d4e5f6a7b8"
+        "s3"
       ],
       "created_at": "2026-06-18T16:45:00+08:00",
       "updated_at": "2026-06-18T16:45:00+08:00"
     },
     {
-      "id": "7bb484c4db5e",
-      "content": "需要为MIA添加Web搜索、天气查询、Shell执行和文件读写四个工具",
+      "id": "a9c738c3033a",
+      "content": "需要为MIA添加Web搜索、天气查询、Shell执行、文件读写四个工具",
       "category": "task",
       "confidence": 0.7,
       "keywords": [
         "工具",
-        "Web搜索",
+        "Web",
         "天气",
-        "Shell",
-        "文件"
+        "Shell"
       ],
       "importance": 0.6,
       "source_sessions": [
-        "d4e5f6a7b8c9"
+        "s4"
       ],
       "created_at": "2026-06-18T18:00:00+08:00",
       "updated_at": "2026-06-18T18:00:00+08:00"
     },
     {
-      "id": "aa38611cb461",
-      "content": "用户的工作环境是Windows 11 + Git Bash + PowerShell，主力Python版本3.12",
+      "id": "61ea024dfc75",
+      "content": "工作环境Windows 11 + Git Bash + PowerShell，Python 3.12",
       "category": "fact",
       "confidence": 0.9,
       "keywords": [
-        "Windows11",
+        "Windows",
         "GitBash",
-        "PowerShell",
         "Python3.12"
       ],
       "importance": 0.7,
       "source_sessions": [
-        "e5f6a7b8c9d0"
+        "s5"
       ],
       "created_at": "2026-06-18T20:10:00+08:00",
       "updated_at": "2026-06-18T20:10:00+08:00"

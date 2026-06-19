@@ -11,8 +11,7 @@
         "MIA",
         "TUI",
         "工具",
-        "Python",
-        "Windows"
+        "Python"
       ],
       "importance": 0.74,
       "category_distribution": {
@@ -30,9 +29,8 @@
         "linnin233",
         "TUI",
         "调用链",
-        "记忆系统",
-        "Agent",
-        "Scheduler"
+        "记忆",
+        "Agent"
       ],
       "importance": 0.8,
       "category_distribution": {
