@@ -10,7 +10,6 @@ TaskAgent 自己也是一个小的 LLM 循环，但它只关心"怎么做"，
 不像 Scheduler 关心"做什么"。
 """
 
-import asyncio
 import json
 import re
 from datetime import datetime, timezone, timedelta
@@ -25,8 +24,6 @@ from mia.bus.message import (
     MessageType,
     make_task_error,
     make_task_result,
-    make_tui_thought,
-    make_tui_tool,
 )
 from mia.providers.base import BaseProvider
 from mia.tools.base import Tool, ToolResult
@@ -132,27 +129,10 @@ class TaskAgent(BaseAgent):
         tools_hint = msg.payload.get("tools_hint", [])
         task_id = msg.msg_id
 
-        # TUI 模式下跳过 print，只发总线消息
-        from mia.config import get_config
-        is_tui = get_config().agent.tui_active
-
-        if not is_tui:
-            print(f"\033[33m[TaskAgent]\033[0m 收到任务")
-            print(f"   \033[90m├─\033[0m 任务: {task}")
-            if tools_hint:
-                print(f"   \033[90m├─\033[0m 建议工具: {', '.join(tools_hint)}")
-
-        # TUI 模式: 发布收到任务思考
-        if is_tui:
-            try:
-                if self.bus:
-                    asyncio.ensure_future(
-                        self.bus.publish(
-                            make_tui_thought("task_agent", "收到任务", task[:200])
-                        )
-                    )
-            except Exception:
-                pass
+        print(f"\033[33m[TaskAgent]\033[0m 收到任务")
+        print(f"   \033[90m├─\033[0m 任务: {task}")
+        if tools_hint:
+            print(f"   \033[90m├─\033[0m 建议工具: {', '.join(tools_hint)}")
 
         logger.info("[TaskAgent] 开始执行任务: {}", task)
 
@@ -162,8 +142,7 @@ class TaskAgent(BaseAgent):
                 tools_hint=tools_hint,
             )
 
-            if not is_tui:
-                print(f"   \033[90m└─\033[0m 完成, 工具调用: {len(tool_calls)}次")
+            print(f"   \033[90m└─\033[0m 完成, 工具调用: {len(tool_calls)}次")
 
             await self.send(make_task_result(
                 task_id=task_id,
@@ -247,21 +226,8 @@ class TaskAgent(BaseAgent):
                     })
                     continue
 
-                # 执行工具 (CLI 模式打印，TUI 模式只发总线消息)
-                from mia.config import get_config
-                if not get_config().agent.tui_active:
-                    print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)})")
-
-                # 通知 TUI 工具开始执行
-                try:
-                    if self.bus:
-                        asyncio.ensure_future(
-                            self.bus.publish(
-                                make_tui_tool(tool_name, json.dumps(tool_args, ensure_ascii=False), status="running")
-                            )
-                        )
-                except Exception:
-                    pass
+                # 执行工具
+                print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)})")
 
                 try:
                     tool = self.tools[tool_name]
@@ -277,19 +243,6 @@ class TaskAgent(BaseAgent):
                     "success": result.success,
                     "output": str(result.data) if result.data else result.error,
                 })
-
-                # 通知 TUI 工具执行结果
-                try:
-                    if self.bus:
-                        output_brief = str(result.data)[:200] if result.data else result.error or ""
-                        status = "success" if result.success else "error"
-                        asyncio.ensure_future(
-                            self.bus.publish(
-                                make_tui_tool(tool_name, "", output_brief, status=status)
-                            )
-                        )
-                except Exception:
-                    pass
 
                 # 将结果反馈给 LLM
                 if result.success:

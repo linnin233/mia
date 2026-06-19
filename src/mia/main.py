@@ -67,14 +67,6 @@ def parse_args():
         "--voice", "-v", type=str,
         help="语音文件路径 (配合 --query 使用)",
     )
-    parser.add_argument(
-        "--tui", action="store_true", default=None,
-        help="强制启用 TUI 模式",
-    )
-    parser.add_argument(
-        "--no-tui", action="store_true", default=False,
-        help="禁用 TUI，使用传统 CLI 模式",
-    )
     return parser.parse_args()
 
 
@@ -489,102 +481,6 @@ async def run_cli_interactive() -> None:
         print("\033[90m已关闭。\033[0m")
 
 
-async def run_tui_mode() -> None:
-    """TUI 交互模式 — 使用 prompt_toolkit 聊天界面
-
-    在 TUI 模式下:
-      - TUI 替代 SenderAgent，订阅 "sender" 通道接收流式输出
-      - Agent 系统在 TUI 运行时持续运转
-      - TUI 负责所有显示和输入
-    """
-    from mia.tui_prompt.app import MiaTuiApp
-    from pathlib import Path as _Path
-
-    config = get_config()
-    config.agent.tui_active = True  # 标记 TUI 模式，Agent 跳过 print()
-
-    # ─── 抑制 loguru 终端输出 (TUI 模式下只写文件) ──────
-    logger.remove()
-    _log_dir = _Path(__file__).parent.parent.parent / "logs"
-    _log_dir.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        _log_dir / "mia-tui.log",
-        rotation="10 MB",
-        retention="3 days",
-        level="DEBUG",
-        format="{time} | {level} | {name}:{function}:{line} - {message}",
-    )
-
-    bus = MessageBus(max_queue_size=100)
-    await bus.start()
-
-    mimo = MiMoProvider(api_key=config.mimo.api_key)
-    deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
-
-    receiver = ReceiverAgent(bus=bus, mimo=mimo)
-    scheduler = SchedulerAgent(
-        bus=bus,
-        provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
-        enable_streaming=config.agent.enable_streaming,
-    )
-    # 注意: 不创建 SenderAgent，TUI 替换它
-    task_agent = TaskAgent(
-        bus=bus,
-        provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
-    )
-    memory_agent = MemoryAgent(
-        bus=bus,
-        provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
-    )
-
-    # 创建 TUI 应用 — 注入 bus 和 config
-    tui = MiaTuiApp(bus=bus, config=config)
-    tui.memory_agent = memory_agent
-
-    # 启动 Agent (不含 Sender)
-    await receiver.start()
-    await memory_agent.start()
-    await scheduler.start()
-    await task_agent.start()
-
-    # 后台消息处理循环
-    tasks: list[asyncio.Task] = []
-    for agent in [receiver, memory_agent, scheduler, task_agent]:
-        tasks.append(asyncio.create_task(agent.run()))
-
-    await asyncio.sleep(0.3)
-
-    logger.info("[Main] TUI 模式 Agent 已启动")
-
-    try:
-        # 进入 TUI 主循环 — 阻塞直到用户退出
-        await tui.run()
-    except Exception as e:
-        logger.error("[Main] TUI 异常: {}", e)
-    finally:
-        # 清理
-        logger.info("[Main] 正在关闭 Agent 系统...")
-        for agent in [receiver, memory_agent, scheduler, task_agent]:
-            try:
-                await agent.stop()
-            except Exception:
-                pass
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await bus.stop()
-        logger.info("[Main] Agent 已关闭")
-
-
 async def run_server(port: int) -> None:
     """HTTP API 服务模式"""
     from fastapi import FastAPI
@@ -644,24 +540,7 @@ def main():
     elif args.query:
         asyncio.run(run_cli_query(args.query, args.image, args.voice))
     else:
-        # 判断是否使用 TUI 模式
-        config = get_config()
-        use_tui = config.agent.tui_enabled
-        if args.no_tui:
-            use_tui = False
-        if args.tui is True:
-            use_tui = True
-
-        if use_tui:
-            try:
-                asyncio.run(run_tui_mode())
-            except Exception as e:
-                # TUI 启动失败（如 Git Bash 不支持 Win32Output）→ 降级 CLI
-                print(f"\033[33m[TUI] 启动失败: {e}\033[0m")
-                print("\033[33m[TUI] 降级为传统 CLI 模式\033[0m")
-                asyncio.run(run_cli_interactive())
-        else:
-            asyncio.run(run_cli_interactive())
+        asyncio.run(run_cli_interactive())
 
 
 if __name__ == "__main__":

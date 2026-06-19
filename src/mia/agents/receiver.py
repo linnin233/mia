@@ -8,7 +8,6 @@ ReceiverAgent — 消息接收 Agent
   4. 产出标准化的 USER_INTENT 发送给 Scheduler
 """
 
-import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -19,7 +18,6 @@ from mia.bus.bus import MessageBus
 from mia.bus.message import (
     Message,
     MessageType,
-    make_tui_thought,
     make_user_intent,
 )
 from mia.providers.mimo import MiMoProvider
@@ -87,29 +85,14 @@ class ReceiverAgent(BaseAgent):
 
         full_intent = "\n".join(intent_parts)
 
-        # 结构化展示 (CLI 模式)
-        from mia.config import get_config
-        if not get_config().agent.tui_active:
-            print(f"\033[35m[Receiver]\033[0m 理解用户输入")
-            print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
-            if image_path:
-                print(f"   \033[90m├─\033[0m 图片: {image_path}")
-            if voice_path:
-                print(f"   \033[90m├─\033[0m 语音: {voice_path}")
-            print(f"   \033[90m└─\033[0m 意图: {full_intent}")
-
-        # TUI 模式: 发布思考过程到聊天区
-        if get_config().agent.tui_active:
-            try:
-                if self.bus:
-                    detail = f"原始输入: {text or '(空)'} | 意图: {full_intent}"
-                    asyncio.ensure_future(
-                        self.bus.publish(
-                            make_tui_thought("receiver", "理解用户输入", detail)
-                        )
-                    )
-            except Exception:
-                pass
+        # 结构化展示
+        print(f"\033[35m[Receiver]\033[0m 理解用户输入")
+        print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
+        if image_path:
+            print(f"   \033[90m├─\033[0m 图片: {image_path}")
+        if voice_path:
+            print(f"   \033[90m├─\033[0m 语音: {voice_path}")
+        print(f"   \033[90m└─\033[0m 意图: {full_intent}")
 
         # 发送到 Scheduler
         intent_msg = make_user_intent(

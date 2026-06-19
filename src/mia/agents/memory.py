@@ -30,7 +30,7 @@ from loguru import logger
 
 from mia.agents.base import BaseAgent
 from mia.bus.bus import MessageBus
-from mia.bus.message import Message, MessageType, make_tui_status, make_tui_thought
+from mia.bus.message import Message, MessageType
 from mia.memory.store import (
     KnowledgeEntry,
     MemoryStore,
@@ -203,17 +203,6 @@ class MemoryAgent(BaseAgent):
             self.provider.__class__.__name__,
         )
 
-        # 通知 TUI 记忆状态
-        try:
-            if self.bus:
-                asyncio.ensure_future(
-                    self.bus.publish(
-                        make_tui_status("memory", f"持久:{self.store.count} 临时:{len(self._working_memory)}")
-                    )
-                )
-        except Exception:
-            pass
-
     async def handle(self, msg: Message) -> None:
         """消息分发 — 处理 USER_INTENT 和 CONVERSATION_DONE"""
         if msg.msg_type == MessageType.USER_INTENT:
@@ -253,9 +242,6 @@ class MemoryAgent(BaseAgent):
                 "[MemoryAgent] 检测到换日: {} → {}，触发合并",
                 self._current_date, today,
             )
-            await self._notify_tui(
-                "换日检测", f"{self._current_date} → {today}，触发 L2 合并"
-            )
             await self._consolidate_daily()
             self._current_date = today
 
@@ -293,41 +279,21 @@ class MemoryAgent(BaseAgent):
         # 合并为完整的 memory_context
         memory_context = "\n\n".join(context_parts)
 
-        # ─── 结构化展示 (CLI 模式) ──────────────────
-        from mia.config import get_config
-        if not get_config().agent.tui_active:
-            print(f"\033[34m[MemoryAgent]\033[0m 检索记忆")
-            print(f"   \033[90m├─\033[0m 意图: {intent[:80]}")
-            print(f"   \033[90m├─\033[0m 对话历史: {len(self._conversation_history)} 轮可用, 注入最近 {min(len(self._conversation_history), self.max_history_turns)} 轮")
-            print(f"   \033[90m├─\033[0m 持久知识: {self.store.count} 条")
-            print(f"   \033[90m├─\033[0m 临时记忆: {len(self._working_memory)} 条")
-            if knowledge_text:
-                print(f"   \033[90m├─\033[0m 知识注入: {knowledge_text[:80]}...")
-            else:
-                print(f"   \033[90m├─\033[0m 无相关知识")
-            if history_text:
-                print(f"   \033[90m└─\033[0m 历史注入: 最近 {min(len(self._conversation_history), self.max_history_turns)} 轮对话")
-            else:
-                print(f"   \033[90m└─\033[0m 无对话历史")
-            print()
-
-        # TUI 模式: 发布思考过程到聊天区
-        if get_config().agent.tui_active:
-            try:
-                if self.bus:
-                    parts = [
-                        f"意图: {intent[:80]}",
-                        f"持久:{self.store.count} 临时:{len(self._working_memory)} 历史:{len(self._conversation_history)}轮",
-                    ]
-                    if knowledge_text:
-                        parts.append(f"知识注入: {knowledge_text[:120]}")
-                    asyncio.ensure_future(
-                        self.bus.publish(
-                            make_tui_thought("memory_agent", "检索记忆", " | ".join(parts))
-                        )
-                    )
-            except Exception:
-                pass
+        # ─── 结构化展示 ──────────────────────────────────
+        print(f"\033[34m[MemoryAgent]\033[0m 检索记忆")
+        print(f"   \033[90m├─\033[0m 意图: {intent[:80]}")
+        print(f"   \033[90m├─\033[0m 对话历史: {len(self._conversation_history)} 轮可用, 注入最近 {min(len(self._conversation_history), self.max_history_turns)} 轮")
+        print(f"   \033[90m├─\033[0m 持久知识: {self.store.count} 条")
+        print(f"   \033[90m├─\033[0m 临时记忆: {len(self._working_memory)} 条")
+        if knowledge_text:
+            print(f"   \033[90m├─\033[0m 知识注入: {knowledge_text[:80]}...")
+        else:
+            print(f"   \033[90m├─\033[0m 无相关知识")
+        if history_text:
+            print(f"   \033[90m└─\033[0m 历史注入: 最近 {min(len(self._conversation_history), self.max_history_turns)} 轮对话")
+        else:
+            print(f"   \033[90m└─\033[0m 无对话历史")
+        print()
 
         # ─── 构造转发消息 ─────────────────────────
         payload = dict(msg.payload)
@@ -450,10 +416,8 @@ class MemoryAgent(BaseAgent):
                 )
         except asyncio.CancelledError:
             logger.warning("[MemoryAgent] 临时知识提取被取消")
-            await self._notify_tui("L1 提取取消", "任务被取消")
         except Exception as e:
             logger.warning("[MemoryAgent] 临时知识提取失败: {}", e)
-            await self._notify_tui("L1 提取失败", f"错误: {e}，降级为本地提取")
             # 同样降级为本地提取
             fallback_entry = self._local_extract_knowledge(
                 user_msg=self._pending_original or self._pending_intent,
@@ -916,15 +880,8 @@ class MemoryAgent(BaseAgent):
     # ═══════════════════════════════════════════════════════
 
     async def _notify_tui(self, title: str, detail: str) -> None:
-        """发布记忆生命周期事件到 TUI (静默失败不影响主流程)"""
-        try:
-            from mia.config import get_config
-            if get_config().agent.tui_active and self.bus:
-                await self.bus.publish(
-                    make_tui_thought("memory_agent", title, detail)
-                )
-        except Exception:
-            pass
+        """(已废弃 — TUI 已移除，保留桩方法避免调用处报错)"""
+        pass
 
     async def _call_llm_with_fallback(
         self,
