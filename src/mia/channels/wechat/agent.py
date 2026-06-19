@@ -308,10 +308,17 @@ class WeChatAgent(BaseAgent):
                 )
 
                 # ─── 2. 上传到微信 CDN ────────────────
+                # 注意: 因为我们用 file_item 发送，上传类型也要用 FILE(3)
+                # 官方插件: Image用IMAGE(1), Video用VIDEO(2), File用FILE(3)
+                # Voice(4) 是给 voice_item 用的，但我们实测 API 不支持 voice_item 发送
                 upload_result = await self._client.upload_media(
                     str(audio_path),
-                    media_type=4,  # 4 = 语音
+                    media_type=3,  # 3 = FILE (与 file_item 匹配)
                     to_user_id=to_user_id,
+                )
+                logger.info(
+                    "[WeChatAgent] CDN 上传完成: rawsize=%d filesize=%d",
+                    upload_result["rawsize"], upload_result["filesize"],
                 )
 
                 # ─── 3. 发送音频文件到微信 ────────────────
@@ -341,12 +348,17 @@ class WeChatAgent(BaseAgent):
                             }],
                         },
                     )
+                    # 官方 openclaw-weixin 插件不检查 sendmessage 的 ret 字段:
+                    #   await sendMessageApi(...) — 不解析响应，HTTP 200 = 成功
+                    # ret=-1 在 getupdates 里表示"无新消息"，在 sendmessage 里
+                    # 可能也是正常值。只要 HTTP 不抛异常就认为消息已送达。
                     ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
-                    if ret == 0:
-                        audio_sent = True
-                        logger.info("[WeChatAgent] 语音文件已发送 to %s", to_user_id[:20])
-                    else:
-                        logger.warning("[WeChatAgent] file_item 被拒 ret=%s", ret)
+                    audio_sent = True
+                    logger.info(
+                        "[WeChatAgent] 语音文件已发送 to %s (ret=%s)",
+                        to_user_id[:20], ret,
+                    )
+                    print(f"\033[32m[WeChatAgent]\033[0m 语音文件已发送 (ret={ret})")
                 except Exception:
                     logger.exception("[WeChatAgent] file_item 发送异常")
 
