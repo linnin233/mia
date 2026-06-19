@@ -251,16 +251,12 @@ class WeChatAgent(BaseAgent):
     async def _handle_output_voice(self, msg: Message) -> None:
         """处理语音输出 — TTS 合成 → 上传 CDN → 发送到微信
 
-        iLink API 支持发送音频文件（media_type=4，消息 type=3 voice_item）。
         流程:
           1. 从 SEND_VOICE payload 获取文本
-          2. 调用 MiMo TTS 生成 PCM16/WAV 音频
+          2. 调用 MiMo TTS 生成 WAV 音频
           3. 上传到微信 CDN（AES-128-ECB 加密）
-          4. 发送 voice_item 消息（用户可在微信直接播放）
-          5. 同时发送文本作为 fallback（防止音频下载失败）
-
-        Args:
-            msg: SEND_VOICE 消息
+          4. 发送 file_item 消息（用户点击播放）
+          5. 同时发送文本作为 fallback
         """
         message = msg.payload.get("message", "")
         voice = msg.payload.get("voice", "冰糖")
@@ -278,122 +274,82 @@ class WeChatAgent(BaseAgent):
             context_token = self._user_context_tokens.get(to_user_id, "")
 
         if not to_user_id or not message:
-            logger.warning(
-                "[WeChatAgent] SEND_VOICE 缺少 to_user_id 或 message"
-            )
+            print(f"\033[33m[WeChatAgent]\033[0m SEND_VOICE 缺少 to_user_id={to_user_id[:20] if to_user_id else 'EMPTY'} msg_len={len(message)}")
             return
+
+        print(f"\033[36m[WeChatAgent]\033[0m → 语音发送 to={to_user_id[:20]} text_len={len(message)}")
 
         audio_sent = False
 
         # ─── 1. TTS 合成 ───────────────────────────────
         if self._mimo:
             try:
-                logger.info(
-                    "[WeChatAgent] 合成 TTS: text_len=%d voice=%s",
-                    len(message), voice,
-                )
                 audio_bytes = await self._mimo.synthesize(
                     text=message,
                     voice=voice,
                     audio_format=audio_format,
                 )
 
-                # 保存音频到临时文件
                 filename = f"wechat_voice_{msg.msg_id}.{audio_format}"
                 audio_path = self._workspace_dir / filename
                 audio_path.write_bytes(audio_bytes)
-                logger.info(
-                    "[WeChatAgent] TTS 已保存: %s (%d bytes)",
-                    audio_path, len(audio_bytes),
-                )
+                print(f"   \033[90m├─\033[0m TTS: {len(audio_bytes)} bytes → {audio_path}")
 
-                # ─── 2. 上传到微信 CDN ────────────────
-                # 注意: 因为我们用 file_item 发送，上传类型也要用 FILE(3)
-                # 官方插件: Image用IMAGE(1), Video用VIDEO(2), File用FILE(3)
-                # Voice(4) 是给 voice_item 用的，但我们实测 API 不支持 voice_item 发送
+                # ─── 2. 上传到 CDN ────────────────
+                print(f"   \033[90m├─\033[0m 上传 CDN...")
                 upload_result = await self._client.upload_media(
                     str(audio_path),
-                    media_type=3,  # 3 = FILE (与 file_item 匹配)
+                    media_type=3,  # FILE
                     to_user_id=to_user_id,
                 )
-                logger.info(
-                    "[WeChatAgent] CDN 上传完成: rawsize=%d filesize=%d",
-                    upload_result["rawsize"], upload_result["filesize"],
-                )
+                print(f"   \033[90m├─\033[0m CDN OK: rawsize={upload_result['rawsize']} filesize={upload_result['filesize']} enc_param={upload_result['encrypt_query_param'][:40]}...")
 
-                # ─── 3. 发送音频文件到微信 ────────────────
-                # iLink API 实测: voice_item (type=3) ret=-1 被拒，
-                # 只有 file_item (type=4) 能成功发送音频。
-                # 用户收到的是可点击播放的音频文件消息。
-                try:
-                    filename = f"mia_voice.{audio_format}"
-                    resp = await self._client.sendmessage(
-                        {
-                            "to_user_id": to_user_id,
-                            "client_id": str(uuid.uuid4()),
-                            "message_type": 2,
-                            "message_state": 2,
-                            "context_token": context_token,
-                            "item_list": [{
-                                "type": 4,  # file_item
-                                "file_item": {
-                                    "media": {
-                                        "encrypt_query_param": upload_result["encrypt_query_param"],
-                                        "aes_key": upload_result["aes_key_b64"],
-                                        "encrypt_type": 1,
-                                    },
-                                    "file_name": filename,
-                                    "len": str(upload_result["rawsize"]),  # 明文大小
-                                },
-                            }],
+                # ─── 3. 发送 file_item ────────────────
+                print(f"   \033[90m├─\033[0m 发送 file_item...")
+                file_msg = {
+                    "to_user_id": to_user_id,
+                    "client_id": str(uuid.uuid4()),
+                    "message_type": 2,
+                    "message_state": 2,
+                    "context_token": context_token,
+                    "item_list": [{
+                        "type": 4,
+                        "file_item": {
+                            "media": {
+                                "encrypt_query_param": upload_result["encrypt_query_param"],
+                                "aes_key": upload_result["aes_key_b64"],
+                                "encrypt_type": 1,
+                            },
+                            "file_name": f"mia_voice.{audio_format}",
+                            "len": str(upload_result["rawsize"]),
                         },
-                    )
-                    # 官方 openclaw-weixin 插件不检查 sendmessage 的 ret 字段:
-                    #   await sendMessageApi(...) — 不解析响应，HTTP 200 = 成功
-                    # ret=-1 在 getupdates 里表示"无新消息"，在 sendmessage 里
-                    # 可能也是正常值。只要 HTTP 不抛异常就认为消息已送达。
-                    ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
-                    audio_sent = True
-                    logger.info(
-                        "[WeChatAgent] 语音文件已发送 to %s (ret=%s)",
-                        to_user_id[:20], ret,
-                    )
-                    print(f"\033[32m[WeChatAgent]\033[0m 语音文件已发送 (ret={ret})")
-                except Exception:
-                    logger.exception("[WeChatAgent] file_item 发送异常")
+                    }],
+                }
+                resp = await self._client.sendmessage(file_msg)
 
-                # 清理临时音频文件
+                ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
+                errcode = resp.get("errcode", "?") if isinstance(resp, dict) else "?"
+                print(f"   \033[90m├─\033[0m 响应: ret={ret} errcode={errcode}")
+
+                # HTTP 200 = 成功（官方插件不检查 ret）
+                audio_sent = True
+                print(f"\033[32m   └─\033[0m 语音文件已发送 ✓")
+
+                # 清理临时文件
                 try:
                     audio_path.unlink(missing_ok=True)
                 except Exception:
                     pass
 
-            except Exception as tts_err:
-                logger.warning(
-                    "[WeChatAgent] TTS 合成失败: %s，降级为文本",
-                    tts_err,
-                )
+            except Exception as e:
+                print(f"\033[31m   └─\033[0m 语音发送失败: {e}")
+                logger.exception("[WeChatAgent] 语音发送异常")
         else:
-            logger.info(
-                "[WeChatAgent] 无 MiMoProvider，语音消息降级为文本"
-            )
+            print(f"   \033[33m└─\033[0m 无 MiMoProvider，跳过语音")
 
-        # ─── 3. Fallback: 总是发送文本（防止音频无法播放） ──
-        # 语音消息前加标识
-        if audio_sent:
-            # 语音已发送，附简短说明
-            await self._send_text_to_user(
-                to_user_id,
-                context_token,
-                f"🎤 {message}",
-            )
-        else:
-            # 语音发送失败/不可用，纯文本
-            await self._send_text_to_user(
-                to_user_id,
-                context_token,
-                message,
-            )
+        # ─── 4. 文本 fallback ───────────────────────────
+        prefix = "🎤 " if audio_sent else ""
+        await self._send_text_to_user(to_user_id, context_token, f"{prefix}{message}")
 
     async def _send_text_to_user(
         self,
@@ -401,23 +357,17 @@ class WeChatAgent(BaseAgent):
         context_token: str,
         text: str,
     ) -> None:
-        """发送文本到微信用户（内部辅助方法）
-
-        Args:
-            to_user_id: 微信用户 ID
-            context_token: iLink context_token
-            text: 要发送的文本
-        """
+        """发送文本到微信用户"""
         if not self._client or not to_user_id or not text:
             return
         try:
             resp = await self._client.send_text(
                 to_user_id, text, context_token,
             )
-            if isinstance(resp, dict) and resp.get("ret", 0) != 0:
-                logger.warning(
-                    "[WeChatAgent] send_text 被拒: ret=%s",
-                    resp.get("ret", ""),
+            ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
+            if ret != 0:
+                logger.debug(
+                    "[WeChatAgent] send_text ret=%s", ret,
                 )
         except Exception:
             logger.exception(
@@ -719,9 +669,6 @@ class WeChatAgent(BaseAgent):
                         text_parts.append(asr_text)
 
                     # ─── 下载原始音频（用于多模态理解） ──
-                    # iLink 的语音消息包含 CDN 上的原始音频，
-                    # 下载后传给 ReceiverAgent → MiMo-V2.5 多模态理解
-                    # （content + emotion + intent，比纯 ASR 转写更丰富）
                     media = voice_item.get("media") or {}
                     encrypt_query_param = media.get(
                         "encrypt_query_param", ""
@@ -736,9 +683,6 @@ class WeChatAgent(BaseAgent):
                         )
                         if audio_path:
                             # ─── SILK → WAV 转码 ──────────
-                            # iLink 语音是 SILK V3 编码（微信私有格式），
-                            # MiMo-V2.5 只支持 mp3/flac/m4a/wav/ogg，
-                            # 需要先转码才能做多模态理解
                             converted = await self._convert_to_wav(audio_path)
                             if converted:
                                 voice_paths.append(converted)
@@ -747,7 +691,6 @@ class WeChatAgent(BaseAgent):
                                     converted,
                                 )
                             else:
-                                # 转码失败 → 保留 ASR 文本，放弃音频理解
                                 logger.warning(
                                     "[WeChatAgent] SILK 转码失败，"
                                     "仅使用 ASR 文本"
@@ -800,7 +743,6 @@ class WeChatAgent(BaseAgent):
                 self._save_context_tokens()
 
             # ─── 发布 RAW_INPUT 到消息总线 ─────────────
-            # 确定用户输入文本（语音优先，因为语音下载了原始音频文件）
             if text:
                 user_input = text
             elif image_paths:
@@ -840,48 +782,27 @@ class WeChatAgent(BaseAgent):
         voice_paths: List[str],
         session_id: str,
     ) -> None:
-        """在主事件循环中发布 RAW_INPUT 消息到总线
-
-        这会触发完整的 MIA Agent 链路:
-          ReceiverAgent → MemoryAgent → SchedulerAgent → TaskAgent → SenderAgent
-
-        对于语音消息: iLink API 会同时返回 ASR 转写文本和 CDN 上的原始音频。
-        WeChatAgent 下载原始音频后传给 ReceiverAgent，后者使用 MiMo-V2.5
-        多模态理解（content + emotion + intent），比纯 ASR 转写更丰富。
-
-        Args:
-            user_input: 用户文本输入（含 ASR 转写文本）
-            image_paths: 图片文件路径列表
-            voice_paths: 语音文件路径列表（CDN 下载的原始音频）
-            session_id: 会话 ID
-        """
-        # 构建 payload
+        """在主事件循环中发布 RAW_INPUT 消息到总线"""
         payload: Dict[str, Any] = {
             "text": user_input,
-            "source": "wechat",  # 标记来源为微信
+            "source": "wechat",
         }
 
-        # 如果有图片，将第一张图片作为主要图片
         if image_paths:
             payload["image"] = image_paths[0]
 
-        # 如果有语音（原始音频已下载），传给 ReceiverAgent 做多模态理解
-        # 优先级: voice > image — 因为语音是最主要的输入通道
         if voice_paths:
             payload["voice"] = voice_paths[0]
-            # 如果语音有 ASR 转写文本，ReceiverAgent 会结合两者做理解
-            # 如果纯语音无转写，ReceiverAgent 直接对音频做多模态理解
 
         raw_msg = Message(
             msg_type=MessageType.RAW_INPUT,
             source="wechat",
-            target="receiver",  # 走正常的 ReceiverAgent 流程
+            target="receiver",
             payload=payload,
             session_id=session_id,
         )
         await self.bus.publish(raw_msg)
 
-        # 终端提示
         voice_hint = (
             f" + 语音({voice_paths[0][-30:]})"
             if voice_paths else ""
@@ -894,14 +815,7 @@ class WeChatAgent(BaseAgent):
     # ─── QR 码登录 ─────────────────────────────────────
 
     async def _do_qrcode_login(self) -> bool:
-        """执行 QR 码扫码登录流程
-
-        打印二维码 URL 到终端，等待用户扫码确认。
-        成功后自动保存 token 到文件。
-
-        Returns:
-            True 如果登录成功
-        """
+        """执行 QR 码扫码登录流程"""
         if not self._client:
             return False
 
@@ -1065,11 +979,7 @@ class WeChatAgent(BaseAgent):
         filename_hint: str = "file.bin",
         encrypt_query_param: str = "",
     ) -> Optional[str]:
-        """下载并解密 CDN 媒体文件
-
-        Returns:
-            本地文件路径，失败返回 None
-        """
+        """下载并解密 CDN 媒体文件"""
         import hashlib
 
         try:
@@ -1100,92 +1010,66 @@ class WeChatAgent(BaseAgent):
     # ─── SILK → WAV 转码 ────────────────────────────
 
     async def _convert_to_wav(self, file_path: str) -> Optional[str]:
-        """将微信 SILK 音频转为 WAV 格式（MiMo 支持的格式）
+        """将微信 SILK 音频转为 WAV 格式
 
-        iLink 语音消息使用 SILK V3 编码（微信私有格式）。
         使用 pilk (Python SILK 解码器) 解码为 PCM，再封装 WAV 容器。
-
-        官方 openclaw-weixin 插件用 silk-wasm 做同样的事 (silk-transcode.js)。
-
-        Args:
-            file_path: SILK 音频文件路径
-
-        Returns:
-            WAV 文件路径，失败返回 None
+        与官方 openclaw-weixin 插件 silk-wasm 方案一致。
         """
         silk_path = Path(file_path)
         if not silk_path.exists():
             return None
 
-        # 检查是否是 SILK 格式（magic bytes: #!SILK_V3，WeChat 前有 0x02 前缀）
         try:
             raw = silk_path.read_bytes()
             head = raw[:16]
             if not (b"SILK" in head or b"#!SILK" in head):
-                # 不是 SILK → 可能已是 WAV 等格式，直接返回
-                logger.debug(
-                    "[WeChatAgent] 音频非 SILK，跳过转码: head=%s",
-                    head[:8].hex(),
-                )
-                return file_path
+                return file_path  # 非 SILK，直接返回
         except Exception:
             return None
 
-        # 剥离 WeChat 的 0x02 前缀字节（标准 SILK 以 #!SILK_V3 开头）
+        # 剥离 WeChat 0x02 前缀
         if raw[0:1] == b"\x02" and raw[1:10] == b"#!SILK_V3":
             silk_data = raw[1:]
-            logger.debug("[WeChatAgent] 已剥离 WeChat 0x02 前缀")
         else:
             silk_data = raw
 
-        # 尝试 pilk 解码
-        # pilk.decode(silk_path, pcm_path) → 写入原始 PCM s16le 文件
         try:
             import pilk
 
-            # 剥离 0x02 前缀后仍需写回临时文件（pilk 只接受文件路径）
+            # pilk.decode(src_path, dst_path) → 写入 PCM
             temp_silk_path = silk_path.with_suffix(".silk.tmp")
             temp_silk_path.write_bytes(silk_data)
 
             pcm_path = silk_path.with_suffix(".pcm")
             try:
-                duration_s = pilk.decode(
-                    str(temp_silk_path), str(pcm_path),
-                )
+                duration_s = pilk.decode(str(temp_silk_path), str(pcm_path))
             finally:
-                # 清理临时 SILK 文件
                 try:
                     temp_silk_path.unlink(missing_ok=True)
                 except Exception:
                     pass
 
-            # 读取 PCM 数据，手动封装 WAV 容器
             pcm = pcm_path.read_bytes()
-            pcm_path.unlink(missing_ok=True)  # 清理临时 PCM
+            pcm_path.unlink(missing_ok=True)
 
-            sample_rate = 24000
-            num_channels = 1
-            bits_per_sample = 16
-            byte_rate = sample_rate * num_channels * bits_per_sample // 8
-            block_align = num_channels * bits_per_sample // 8
+            # 封装 WAV 容器
+            sample_rate = 24000; channels = 1; bps = 16
+            byte_rate = sample_rate * channels * bps // 8
+            block_align = channels * bps // 8
             data_size = len(pcm)
-            riff_size = 36 + data_size
 
             wav = bytearray(44 + data_size)
-            # RIFF header
             wav[0:4] = b"RIFF"
-            wav[4:8] = riff_size.to_bytes(4, "little")
+            wav[4:8] = (36 + data_size).to_bytes(4, "little")
             wav[8:12] = b"WAVE"
-            # fmt chunk
             wav[12:16] = b"fmt "
-            wav[16:20] = (16).to_bytes(4, "little")          # fmt chunk size
-            wav[20:22] = (1).to_bytes(2, "little")           # PCM format
-            wav[22:24] = num_channels.to_bytes(2, "little")  # mono
+            wav[16:20] = (16).to_bytes(4, "little")
+            wav[20:22] = (1).to_bytes(2, "little")
+            wav[22:24] = channels.to_bytes(2, "little")
             wav[24:28] = sample_rate.to_bytes(4, "little")
             wav[28:32] = byte_rate.to_bytes(4, "little")
             wav[32:34] = block_align.to_bytes(2, "little")
-            wav[34:36] = bits_per_sample.to_bytes(2, "little")
-            # data chunk
+            wav[34:36] = bps.to_bytes(2, "little")
             wav[36:40] = b"data"
             wav[40:44] = data_size.to_bytes(4, "little")
             wav[44:] = pcm
@@ -1194,12 +1078,10 @@ class WeChatAgent(BaseAgent):
             wav_path.write_bytes(bytes(wav))
 
             logger.info(
-                "[WeChatAgent] SILK→WAV 转码成功: %s → %s "
-                "(%d bytes, %.1fs)",
+                "[WeChatAgent] SILK→WAV: %s → %s (%d bytes, %.1fs)",
                 silk_path.name, wav_path.name,
                 len(wav), float(duration_s or 0) / 1000,
             )
-            # 清理原始 SILK 文件
             try:
                 silk_path.unlink(missing_ok=True)
             except Exception:
@@ -1207,14 +1089,9 @@ class WeChatAgent(BaseAgent):
             return str(wav_path)
 
         except ImportError:
-            logger.warning(
-                "[WeChatAgent] pilk 未安装，无法解码 SILK。"
-                "请运行: pip install pilk"
-            )
+            logger.warning("[WeChatAgent] pilk 未安装，pip install pilk")
         except Exception as e:
-            logger.warning(
-                "[WeChatAgent] pilk 解码失败: %s", e
-            )
+            logger.warning("[WeChatAgent] pilk 解码失败: %s", e)
 
         return None
 
@@ -1226,15 +1103,7 @@ class WeChatAgent(BaseAgent):
         *,
         description: str = "",
     ) -> bool:
-        """将协程安全地调度到主事件循环（从轮询线程调用）
-
-        Args:
-            coro: 要在主循环中执行的协程
-            description: 调试描述
-
-        Returns:
-            True 如果成功调度
-        """
+        """将协程安全地调度到主事件循环（从轮询线程调用）"""
         if not self._loop_accepting.is_set():
             logger.debug(
                 "wechat: skipping dispatch (loop not accepting): %s",
@@ -1263,61 +1132,40 @@ class WeChatAgent(BaseAgent):
 
     @staticmethod
     def _looks_like_filename(text: str) -> bool:
-        """检查文本是否看起来像纯文件名（用于过滤文件消息的误触发）"""
+        """检查文本是否看起来像纯文件名"""
         common_extensions = (
-            ".txt",
-            ".doc",
-            ".docx",
-            ".pdf",
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".gif",
-            ".mp4",
-            ".avi",
-            ".mov",
-            ".mp3",
-            ".wav",
-            ".zip",
-            ".rar",
-            ".xlsx",
-            ".xls",
-            ".ppt",
-            ".pptx",
+            ".txt", ".doc", ".docx", ".pdf", ".jpg", ".jpeg",
+            ".png", ".gif", ".mp4", ".avi", ".mov", ".mp3",
+            ".wav", ".zip", ".rar", ".xlsx", ".xls", ".ppt", ".pptx",
         )
         text_lower = text.lower().strip()
-        return any(
-            text_lower.endswith(ext) for ext in common_extensions
-        )
+        return any(text_lower.endswith(ext) for ext in common_extensions)
 
     @staticmethod
-    def _extract_quoted_text(
-        ref_msg: Dict[str, Any],
-    ) -> str:
+    def _extract_quoted_text(ref_msg: Dict[str, Any]) -> str:
         """从引用消息中提取文本内容"""
         quoted_item = ref_msg.get("message_item") or {}
         quoted_type = quoted_item.get("type", 0)
 
-        if quoted_type == 1:  # 文本
+        if quoted_type == 1:
             return (
                 (quoted_item.get("text_item") or {})
-                .get("text", "")
-                .strip()
+                .get("text", "").strip()
             )
-        elif quoted_type == 3:  # 语音（ASR 转写）
+        elif quoted_type == 3:
             voice_item = quoted_item.get("voice_item") or {}
             return (
                 voice_item.get("text_item", {}).get("text", "").strip()
                 if isinstance(voice_item.get("text_item"), dict)
                 else voice_item.get("text", "").strip()
             )
-        elif quoted_type == 4:  # 文件
+        elif quoted_type == 4:
             file_item = quoted_item.get("file_item") or {}
             filename = file_item.get("file_name", "") or ""
             return f"[文件: {filename}]" if filename else "[文件]"
-        elif quoted_type == 2:  # 图片
+        elif quoted_type == 2:
             return "[图片]"
-        elif quoted_type == 5:  # 视频
+        elif quoted_type == 5:
             return "[视频]"
 
         return ""
