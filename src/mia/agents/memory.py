@@ -253,6 +253,9 @@ class MemoryAgent(BaseAgent):
                 "[MemoryAgent] 检测到换日: {} → {}，触发合并",
                 self._current_date, today,
             )
+            await self._notify_tui(
+                "换日检测", f"{self._current_date} → {today}，触发 L2 合并"
+            )
             await self._consolidate_daily()
             self._current_date = today
 
@@ -422,9 +425,17 @@ class MemoryAgent(BaseAgent):
                     "[MemoryAgent] Level 1 临时知识已提取: {} 条, working_total={}",
                     len(extracted), len(self._working_memory),
                 )
+                # TUI: 通知 Level 1 提取完成
+                await self._notify_tui(
+                    "L1 提取临时知识",
+                    f"本轮提取 {len(extracted)} 条 → 临时记忆共 {len(self._working_memory)} 条"
+                )
         except asyncio.TimeoutError:
             logger.warning("[MemoryAgent] 临时知识提取超时 ({:.0f}s)，降级为本地提取",
                            self.EXTRACTION_TIMEOUT)
+            await self._notify_tui(
+                "L1 提取超时", f"LLM 超时({self.EXTRACTION_TIMEOUT}s)，降级为本地提取"
+            )
             # 降级: 本地提取基础知识，不依赖 LLM，保证知识不丢失
             fallback_entry = self._local_extract_knowledge(
                 user_msg=self._pending_original or self._pending_intent,
@@ -439,8 +450,10 @@ class MemoryAgent(BaseAgent):
                 )
         except asyncio.CancelledError:
             logger.warning("[MemoryAgent] 临时知识提取被取消")
+            await self._notify_tui("L1 提取取消", "任务被取消")
         except Exception as e:
             logger.warning("[MemoryAgent] 临时知识提取失败: {}", e)
+            await self._notify_tui("L1 提取失败", f"错误: {e}，降级为本地提取")
             # 同样降级为本地提取
             fallback_entry = self._local_extract_knowledge(
                 user_msg=self._pending_original or self._pending_intent,
@@ -455,6 +468,10 @@ class MemoryAgent(BaseAgent):
             logger.info(
                 "[MemoryAgent] 临时记忆达到上限 ({} >= {})，触发强制合并",
                 len(self._working_memory), self.MAX_WORKING_ENTRIES,
+            )
+            await self._notify_tui(
+                "L1 触发强制合并",
+                f"临时记忆达到 {len(self._working_memory)}/{self.MAX_WORKING_ENTRIES} 上限"
             )
             await self._consolidate_daily()
 
@@ -625,6 +642,11 @@ class MemoryAgent(BaseAgent):
             "[MemoryAgent] 开始 Level 2 合并: working={}, buffer={} 轮对话",
             len(self._working_memory), len(self._daily_buffer),
         )
+        # TUI: 通知 Level 2 合并开始
+        await self._notify_tui(
+            "L2 合并持久化",
+            f"临时记忆 {len(self._working_memory)} 条 + {len(self._daily_buffer)} 轮对话 → LLM 合并去重"
+        )
 
         # ─── 构建临时知识文本 ──────────────────────
         if self._working_memory:
@@ -721,6 +743,11 @@ class MemoryAgent(BaseAgent):
         logger.info(
             "[MemoryAgent] Level 2 合并完成: {} 条临时记忆 + {} 轮对话 → {} 条持久知识",
             len(self._working_memory), len(self._daily_buffer), consolidated_count,
+        )
+        # TUI: 通知 Level 2 合并结果
+        await self._notify_tui(
+            "L2 合并完成",
+            f"{len(self._working_memory)} 临时 + {len(self._daily_buffer)} 对话 → {consolidated_count} 条持久知识 (store共{self.store.count}条)"
         )
 
         # ─── 清空临时记忆和缓冲 ────────────────────
@@ -887,6 +914,17 @@ class MemoryAgent(BaseAgent):
     # ═══════════════════════════════════════════════════════
     # LLM 调用辅助
     # ═══════════════════════════════════════════════════════
+
+    async def _notify_tui(self, title: str, detail: str) -> None:
+        """发布记忆生命周期事件到 TUI (静默失败不影响主流程)"""
+        try:
+            from mia.config import get_config
+            if get_config().agent.tui_active and self.bus:
+                await self.bus.publish(
+                    make_tui_thought("memory_agent", title, detail)
+                )
+        except Exception:
+            pass
 
     async def _call_llm_with_fallback(
         self,
