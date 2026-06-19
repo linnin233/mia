@@ -59,27 +59,24 @@ class MiaTuiApp(App):
     完整的 AI 对话终端界面，集成 MIA 的 MessageBus + Agent 系统。
     """
 
-    # 内嵌 CSS (避免文件路径缓存问题)
+    # 内嵌 CSS
     CSS = """
-    Screen {
-        background: #1a1b26;
-        color: #c0caf5;
-        layout: grid;
-        grid-rows: auto 1fr auto;
-        grid-gutter: 0;
-    }
+    Screen { background: #1a1b26; color: #c0caf5; }
+
+    Header { dock: top; }
 
     #chat-history {
+        height: 1fr;
         overflow-y: auto;
         padding: 1 2;
         scrollbar-color: #3b4261;
     }
 
     #input-area {
-        height: auto;
-        min-height: 3;
+        dock: bottom;
+        height: 5;
         background: #16161e;
-        padding: 0 1 1 1;
+        padding: 0 1;
         border-top: solid #3b4261;
     }
     #input-area Input {
@@ -162,10 +159,7 @@ class MiaTuiApp(App):
     def compose(self) -> ComposeResult:
         """构建 TUI 布局
 
-        Grid 三行布局:
-          row 0: Header (auto 高度)
-          row 1: #chat-history (1fr, 填充剩余空间)
-          row 2: #input-area (auto/min-height: 3, 底部固定)
+        Header(dock:top) → ChatHistory(1fr) → InputArea(dock:bottom, height:5)
         """
         yield Header(show_clock=True, name="MIA")
         yield ScrollableContainer(id="chat-history")
