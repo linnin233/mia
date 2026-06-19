@@ -314,9 +314,12 @@ class WeChatAgent(BaseAgent):
                     to_user_id=to_user_id,
                 )
 
-                # ─── 3. 发送（voice_item 优先 → file_item 回退） ──
-                # 先尝试 voice_item (type=3) — 原生语音条
+                # ─── 3. 发送音频文件到微信 ────────────────
+                # iLink API 实测: voice_item (type=3) ret=-1 被拒，
+                # 只有 file_item (type=4) 能成功发送音频。
+                # 用户收到的是可点击播放的音频文件消息。
                 try:
+                    filename = f"mia_voice.{audio_format}"
                     resp = await self._client.sendmessage(
                         {
                             "to_user_id": to_user_id,
@@ -325,13 +328,15 @@ class WeChatAgent(BaseAgent):
                             "message_state": 2,
                             "context_token": context_token,
                             "item_list": [{
-                                "type": 3,  # voice_item
-                                "voice_item": {
+                                "type": 4,  # file_item
+                                "file_item": {
                                     "media": {
                                         "encrypt_query_param": upload_result["encrypt_query_param"],
                                         "aes_key": upload_result["aes_key_b64"],
                                         "encrypt_type": 1,
                                     },
+                                    "file_name": filename,
+                                    "len": str(upload_result["filesize"]),
                                 },
                             }],
                         },
@@ -339,43 +344,11 @@ class WeChatAgent(BaseAgent):
                     ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
                     if ret == 0:
                         audio_sent = True
-                        logger.info("[WeChatAgent] voice_item 发送成功 to %s", to_user_id[:20])
+                        logger.info("[WeChatAgent] 语音文件已发送 to %s", to_user_id[:20])
                     else:
-                        logger.warning("[WeChatAgent] voice_item 被拒 ret=%s", ret)
+                        logger.warning("[WeChatAgent] file_item 被拒 ret=%s", ret)
                 except Exception:
-                    logger.warning("[WeChatAgent] voice_item 异常", exc_info=True)
-
-                # voice_item 不支持 → 回退 file_item（音频文件，点击播放）
-                if not audio_sent:
-                    try:
-                        filename = f"mia_voice.{audio_format}"
-                        resp = await self._client.sendmessage(
-                            {
-                                "to_user_id": to_user_id,
-                                "client_id": str(uuid.uuid4()),
-                                "message_type": 2,
-                                "message_state": 2,
-                                "context_token": context_token,
-                                "item_list": [{
-                                    "type": 4,  # file_item
-                                    "file_item": {
-                                        "media": {
-                                            "encrypt_query_param": upload_result["encrypt_query_param"],
-                                            "aes_key": upload_result["aes_key_b64"],
-                                            "encrypt_type": 1,
-                                        },
-                                        "file_name": filename,
-                                        "len": str(upload_result["filesize"]),
-                                    },
-                                }],
-                            },
-                        )
-                        ret = resp.get("ret", -1) if isinstance(resp, dict) else -1
-                        if ret == 0:
-                            audio_sent = True
-                            logger.info("[WeChatAgent] file_item 回退成功 to %s", to_user_id[:20])
-                    except Exception:
-                        logger.exception("[WeChatAgent] file_item 回退也失败")
+                    logger.exception("[WeChatAgent] file_item 发送异常")
 
                 # 清理临时音频文件
                 try:
