@@ -75,17 +75,14 @@ def parse_args():
 
 
 def _check_tui_support() -> bool:
-    """检测终端是否支持 Textual TUI
+    """检测是否支持 Textual TUI
 
     条件:
-      1. stdout 是 tty (非管道/重定向)
-      2. 未设置 MIA_NO_TUI 环境变量
-      3. textual 包已安装
-      4. 不在 pytest 中运行
+      1. 未设置 MIA_NO_TUI 环境变量
+      2. textual 包已安装并可导入
+      3. 不在 pytest 中运行
     """
     import os
-    if not sys.stdout.isatty():
-        return False
     if os.environ.get("MIA_NO_TUI"):
         return False
     # 检测 pytest
@@ -99,10 +96,18 @@ def _check_tui_support() -> bool:
 
 
 async def _run_tui_mode() -> None:
-    """Textual TUI 模式 — 全屏终端界面"""
+    """Textual TUI 模式 — 全屏终端界面，启动失败自动降级"""
     from mia.tui.app import MiaTuiApp
-    app = MiaTuiApp()
-    await app.run_async()
+    from loguru import logger
+    try:
+        app = MiaTuiApp()
+        await app.run_async()
+    except Exception as e:
+        logger.warning("[Main] Textual TUI 启动失败 ({}): {}，降级为纯文本模式", type(e).__name__, e)
+        print(f"\033[33m[TUI] 终端不支持或 Textual 启动失败: {e}\033[0m")
+        print(f"\033[33m[TUI] 降级为纯文本交互模式\033[0m")
+        print()
+        await run_cli_interactive(use_tui=False)
 
 
 async def run_agent_pipeline(
