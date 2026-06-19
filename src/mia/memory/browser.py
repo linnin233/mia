@@ -366,7 +366,7 @@ class MemoryBrowser:
             print(f"  \033[33m临时记忆\033[0m ({working_total}条) \033[90m— 待持久化，低置信度\033[0m")
             for i, entry in enumerate(self.working_entries):
                 cat_label = entry.category_label
-                preview = entry.content.replace("\n", " ")[:80]
+                preview = entry.content.replace("\n", " ")[:200]
                 if len(entry.content) > 80:
                     preview += "..."
                 conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"
@@ -388,7 +388,7 @@ class MemoryBrowser:
                 for i, entry in enumerate(entries):
                     global_idx = idx_offset + i + 1
                     cat_label = entry.category_label
-                    preview = entry.content.replace("\n", " ")[:80]
+                    preview = entry.content.replace("\n", " ")[:200]
                     if len(entry.content) > 80:
                         preview += "..."
                     conf_str = f"\033[90m({entry.confidence:.1f})\033[0m"

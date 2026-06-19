@@ -1,185 +1,19 @@
 {
   "date": "2026-06-19",
-  "updated": "2026-06-19T20:41:58.311032+08:00",
+  "updated": "2026-06-19T20:56:10.061654+08:00",
   "entries": [
     {
-      "id": "c79a95a511fa",
-      "content": "用户的名字是linnin233",
+      "id": "030cd8369447",
+      "content": "**用户信息：** linnin233，偏好纯中文技术交流，不喜中英混杂。\n\n**项目概况：** 正在开发MIA多Agent系统，技术栈Python+asyncio，工作环境Windows",
       "category": "insight",
-      "confidence": 0.8,
+      "confidence": 0.5,
       "keywords": [
-        "linnin233",
-        "名字"
+        "摘要"
       ],
       "importance": 1.0,
-      "source_sessions": [
-        "s6"
-      ],
-      "created_at": "2026-06-19T02:24:00+08:00",
-      "updated_at": "2026-06-19T02:24:00+08:00"
-    },
-    {
-      "id": "659ed526a7c0",
-      "content": "希望TUI界面显示完整Agent调用链Receiver→Memory→Scheduler→Sender",
-      "category": "preference",
-      "confidence": 0.8,
-      "keywords": [
-        "TUI",
-        "调用链",
-        "Agent"
-      ],
-      "importance": 0.8,
-      "source_sessions": [
-        "s7"
-      ],
-      "created_at": "2026-06-19T02:30:00+08:00",
-      "updated_at": "2026-06-19T02:30:00+08:00"
-    },
-    {
-      "id": "54cfd925f7b0",
-      "content": "Scheduler的LLM推理需显示在MIA回复之前，消息顺序很重要",
-      "category": "insight",
-      "confidence": 0.7,
-      "keywords": [
-        "Scheduler",
-        "推理",
-        "顺序"
-      ],
-      "importance": 0.7,
-      "source_sessions": [
-        "s8"
-      ],
-      "created_at": "2026-06-19T02:35:00+08:00",
-      "updated_at": "2026-06-19T02:35:00+08:00"
-    },
-    {
-      "id": "fb71081d4ad9",
-      "content": "记忆系统采用两级梯度设计Level1临时记忆+Level2持久知识",
-      "category": "fact",
-      "confidence": 0.9,
-      "keywords": [
-        "记忆",
-        "MemoryAgent",
-        "设计"
-      ],
-      "importance": 0.7,
-      "source_sessions": [
-        "s9"
-      ],
-      "created_at": "2026-06-19T03:00:00+08:00",
-      "updated_at": "2026-06-19T03:00:00+08:00"
-    },
-    {
-      "id": "a11409178e65",
-      "content": "我喜欢一个女孩子叫叶梓 喜欢她九年了",
-      "category": "fact",
-      "confidence": 0.6,
-      "keywords": [
-        "我喜",
-        "喜欢",
-        "欢一",
-        "个女",
-        "女孩"
-      ],
-      "importance": 0.3,
-      "source_sessions": [
-        "a5a3f564b8ce"
-      ],
-      "created_at": "2026-06-19T15:29:16.276290+08:00",
-      "updated_at": "2026-06-19T15:29:16.276290+08:00"
-    },
-    {
-      "id": "16fc23254db4",
-      "content": "你好，我是linnin233，请记住我的名字",
-      "category": "fact",
-      "confidence": 0.6,
-      "keywords": [
-        "linnin233",
-        "你好",
-        "好我",
-        "我是",
-        "是请"
-      ],
-      "importance": 0.7999999999999999,
-      "source_sessions": [
-        "7e50f9029600"
-      ],
-      "created_at": "2026-06-19T20:29:11.557365+08:00",
-      "updated_at": "2026-06-19T20:29:11.557365+08:00"
-    },
-    {
-      "id": "68191afe2f31",
-      "content": "搜索一下今天的Python最新新闻",
-      "category": "fact",
-      "confidence": 0.6,
-      "keywords": [
-        "Python",
-        "搜索",
-        "索一",
-        "下今",
-        "今天"
-      ],
-      "importance": 0.5,
-      "source_sessions": [
-        "050fb1138333"
-      ],
-      "created_at": "2026-06-19T20:36:27.970134+08:00",
-      "updated_at": "2026-06-19T20:36:27.970134+08:00"
-    },
-    {
-      "id": "f77175163e32",
-      "content": "刚才我查过哪两个城市的天气？如果只有一个，告诉我是哪个",
-      "category": "fact",
-      "confidence": 0.6,
-      "keywords": [
-        "刚才",
-        "才我",
-        "我查",
-        "查过",
-        "过哪"
-      ],
-      "importance": 0.4,
-      "source_sessions": [
-        "1e3d073a1121"
-      ],
-      "created_at": "2026-06-19T20:37:18.045950+08:00",
-      "updated_at": "2026-06-19T20:37:18.045950+08:00"
-    },
-    {
-      "id": "25b78e88c51d",
-      "content": "讲个简短的笑话",
-      "category": "fact",
-      "confidence": 0.6,
-      "keywords": [
-        "讲个",
-        "个简",
-        "简短",
-        "短的",
-        "的笑"
-      ],
-      "importance": 0.3,
-      "source_sessions": [
-        "957ae341becb"
-      ],
-      "created_at": "2026-06-19T20:39:21.766485+08:00",
-      "updated_at": "2026-06-19T20:39:21.766485+08:00"
-    },
-    {
-      "id": "2b3db1d53b78",
-      "content": "用户自称或常用昵称为“linnin233”。",
-      "category": "fact",
-      "confidence": 0.7,
-      "keywords": [
-        "用户名",
-        "昵称",
-        "linnin233"
-      ],
-      "importance": 0.5,
-      "source_sessions": [
-        "bfcc0ebd8430"
-      ],
-      "created_at": "2026-06-19T20:41:58.311032+08:00",
-      "updated_at": "2026-06-19T20:41:58.311032+08:00"
+      "source_sessions": [],
+      "created_at": "2026-06-19T20:56:10.061654+08:00",
+      "updated_at": "2026-06-19T20:56:10.061654+08:00"
     }
   ]
 }

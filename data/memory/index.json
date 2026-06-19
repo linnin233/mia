@@ -1,57 +1,17 @@
 {
   "version": 3,
-  "updated": "2026-06-19T20:41:58.311032+08:00",
+  "updated": "2026-06-19T20:56:10.061654+08:00",
   "days": {
-    "2026-06-18": {
-      "file": "daily/2026-06-18.json",
-      "entry_count": 5,
-      "daily_summary": "",
-      "keywords": [
-        "中文",
-        "MIA",
-        "TUI",
-        "工具",
-        "Python"
-      ],
-      "importance": 0.74,
-      "category_distribution": {
-        "fact": 2,
-        "preference": 1,
-        "decision": 1,
-        "task": 1
-      }
-    },
     "2026-06-19": {
       "file": "daily/2026-06-19.json",
-      "entry_count": 10,
+      "entry_count": 1,
       "daily_summary": "",
       "keywords": [
-        "linnin233",
-        "TUI",
-        "调用链",
-        "记忆",
-        "Agent",
-        "Scheduler",
-        "我喜",
-        "喜欢",
-        "欢一",
-        "个女",
-        "女孩",
-        "你好",
-        "好我",
-        "我是",
-        "是请",
-        "Python",
-        "搜索",
-        "索一",
-        "下今",
-        "今天"
+        "摘要"
       ],
-      "importance": 0.8,
+      "importance": 1.0,
       "category_distribution": {
-        "insight": 2,
-        "preference": 1,
-        "fact": 7
+        "insight": 1
       }
     }
   }
