@@ -376,17 +376,12 @@ class WeChatAgent(BaseAgent):
                             logger.info("[WeChatAgent] file_item 回退成功 to %s", to_user_id[:20])
                     except Exception:
                         logger.exception("[WeChatAgent] file_item 回退也失败")
-                except Exception as upload_err:
-                    logger.warning(
-                        "[WeChatAgent] 语音上传/发送失败: %s",
-                        upload_err,
-                    )
-                finally:
-                    # 清理临时音频文件
-                    try:
-                        audio_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+
+                # 清理临时音频文件
+                try:
+                    audio_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
             except Exception as tts_err:
                 logger.warning(
