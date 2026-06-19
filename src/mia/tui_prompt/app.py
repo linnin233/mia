@@ -352,16 +352,42 @@ class MiaTuiApp:
 
         elif command == "/memory":
             if self.memory_agent:
-                w = len(self.memory_agent._working_memory)
-                p = self.memory_agent.store.count
-                h = len(self.memory_agent._conversation_history)
+                ma = self.memory_agent
+                w = len(ma._working_memory)
+                p = ma.store.count
+                h = len(ma._conversation_history)
+                d = len(ma._daily_buffer)
                 lines = [
-                    f"记忆状态  临时:{w}条  持久:{p}条  历史:{h}轮"
+                    f"记忆状态  临时:{w}条  持久:{p}条  历史:{h}轮  日缓冲:{d}轮",
+                    "",
                 ]
-                for e in self.memory_agent._working_memory:
-                    lines.append(
-                        f"  [{e.category_label}] {e.content[:80]}"
-                    )
+
+                # ── 持久知识 ──
+                if p > 0:
+                    lines.append("── 持久知识 ──")
+                    for e in ma.store.get_recent(10):
+                        cat = getattr(e, 'category_label', e.category if hasattr(e, 'category') else '?')
+                        lines.append(f"  [{cat}] {e.content[:100]}")
+                    lines.append("")
+
+                # ── 临时记忆 ──
+                if w > 0:
+                    lines.append("── 临时记忆 ──")
+                    for e in ma._working_memory:
+                        cat = getattr(e, 'category_label', e.category if hasattr(e, 'category') else '?')
+                        lines.append(f"  [{cat}] {e.content[:100]}")
+                    lines.append("")
+
+                # ── 对话历史 ──
+                if h > 0:
+                    lines.append(f"── 对话历史 (最近{min(h, 3)}轮) ──")
+                    for turn in ma._conversation_history[-3:]:
+                        u = turn.get("user", "")[:60]
+                        a = turn.get("assistant", "")[:60]
+                        lines.append(f"  You: {u}")
+                        lines.append(f"  MIA: {a}")
+                        lines.append("")
+
                 self._add_message("system", "\n".join(lines))
             else:
                 self._add_message("error", "记忆系统未就绪")
