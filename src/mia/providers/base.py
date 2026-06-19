@@ -57,3 +57,28 @@ class BaseProvider(ABC):
         用于 Scheduler 决策等需要完整 JSON 解析的场景。
         """
         ...
+
+    @abstractmethod
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[str]:
+        """
+        流式对话 — 返回文本 token 的异步迭代器
+
+        用于用户可见的回复生成，实现逐字输出的流式效果。
+        每个 yield 返回一个文本增量 (delta)，调用方负责拼接和展示。
+
+        Args:
+            messages: OpenAI 格式消息列表
+            model: 模型名 (None 则用默认)
+            max_tokens: 最大输出 token 数
+            temperature: 温度参数 (0-2)
+
+        Yields:
+            文本增量字符串 (可能包含多个 token)
+        """
+        ...

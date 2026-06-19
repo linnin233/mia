@@ -78,6 +78,9 @@ class AgentConfig(BaseSettings):
     memory_max_working_entries: int = 30  # 临时记忆上限（触发强制合并）
     memory_extraction_timeout: float = 8.0  # 知识提取超时秒数
 
+    # 流式输出
+    enable_streaming: bool = True         # 是否启用流式输出 (MIA_ENABLE_STREAMING)
+
     model_config = {"env_prefix": "MIA_"}
 
 

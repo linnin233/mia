@@ -25,6 +25,16 @@ class MessageType(enum.Enum):
     SEND_VOICE = "send_voice"
     """语音回复指令: Scheduler 要求 Sender 发送语音消息"""
 
+    # ─── Scheduler → Sender (流式) ──────────────────────
+    STREAM_START = "stream_start"
+    """流式回复开始: Scheduler 通知 Sender 准备接收流式文本"""
+
+    STREAM_CHUNK = "stream_chunk"
+    """流式文本块: Scheduler 推送一个文本增量 (delta) 给 Sender"""
+
+    STREAM_END = "stream_end"
+    """流式回复结束: Scheduler 通知 Sender 流式文本已完成"""
+
     # ─── Scheduler ⇄ TaskAgent ─────────────────────────
     EXECUTE_TASK = "execute_task"
     """任务执行指令: Scheduler 要求 TaskAgent 执行任务"""
@@ -248,5 +258,58 @@ def make_task_error(
             "error": error,
         },
         parent_id=task_id,
+        session_id=session_id,
+    )
+
+
+# ─── 流式消息工厂函数 ─────────────────────────────────
+
+
+def make_stream_start(session_id: Optional[str] = None) -> Message:
+    """构建 STREAM_START 消息 — 通知 Sender 准备接收流式文本
+
+    Args:
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.STREAM_START,
+        source="scheduler",
+        target="sender",
+        payload={},
+        session_id=session_id,
+    )
+
+
+def make_stream_chunk(delta: str, session_id: Optional[str] = None) -> Message:
+    """构建 STREAM_CHUNK 消息 — 推送一个文本增量
+
+    Args:
+        delta: 增量文本 (LLM 流式输出的一个 chunk)
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.STREAM_CHUNK,
+        source="scheduler",
+        target="sender",
+        payload={"delta": delta},
+        session_id=session_id,
+    )
+
+
+def make_stream_end(
+    full_message: str,
+    session_id: Optional[str] = None,
+) -> Message:
+    """构建 STREAM_END 消息 — 通知 Sender 流式文本已完成
+
+    Args:
+        full_message: 完整的回复文本 (供 MemoryAgent 存储)
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.STREAM_END,
+        source="scheduler",
+        target="sender",
+        payload={"message": full_message},
         session_id=session_id,
     )

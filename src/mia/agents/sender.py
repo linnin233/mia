@@ -45,6 +45,12 @@ class SenderAgent(BaseAgent):
             await self._handle_send_text(msg)
         elif msg.msg_type == MessageType.SEND_VOICE:
             await self._handle_send_voice(msg)
+        elif msg.msg_type == MessageType.STREAM_START:
+            await self._handle_stream_start(msg)
+        elif msg.msg_type == MessageType.STREAM_CHUNK:
+            await self._handle_stream_chunk(msg)
+        elif msg.msg_type == MessageType.STREAM_END:
+            await self._handle_stream_end(msg)
         else:
             logger.debug("[Sender] 忽略消息类型: {}", msg.msg_type)
 
@@ -60,6 +66,47 @@ class SenderAgent(BaseAgent):
         print(f"\033[1m{'-'*50}\033[0m")
 
         logger.info("[Sender] 文本回复已输出, len={}", len(message))
+
+        # 通知 main 对话已完成
+        await self.bus.publish(Message(
+            msg_type=MessageType.CONVERSATION_DONE,
+            source=self.name,
+            target="main",
+            payload={"message": message},
+            session_id=msg.session_id,
+        ))
+
+        # 同时通知 MemoryAgent 存储本轮对话
+        await self.bus.publish(Message(
+            msg_type=MessageType.CONVERSATION_DONE,
+            source=self.name,
+            target="memory_agent",
+            payload={"message": message},
+            session_id=msg.session_id,
+        ))
+
+    # ─── 流式输出处理 ──────────────────────────────────
+
+    async def _handle_stream_start(self, msg: Message) -> None:
+        """流式输出开始 — 打印 header，准备接收增量文本"""
+        print()
+        print(f"\033[32m[Sender]\033[0m 输出回复:")
+        print(f"   \033[90m└─\033[0m ", end="", flush=True)
+
+    async def _handle_stream_chunk(self, msg: Message) -> None:
+        """流式输出文本块 — 立即打印增量文本，不换行"""
+        delta = msg.payload.get("delta", "")
+        if delta:
+            print(delta, end="", flush=True)
+
+    async def _handle_stream_end(self, msg: Message) -> None:
+        """流式输出结束 — 打印 footer，发送 CONVERSATION_DONE"""
+        message = msg.payload.get("message", "")
+        print()  # 流式文本结束，换行
+        print()
+        print(f"\033[1m{'-'*50}\033[0m")
+
+        logger.info("[Sender] 流式回复完成, len={}", len(message))
 
         # 通知 main 对话已完成
         await self.bus.publish(Message(

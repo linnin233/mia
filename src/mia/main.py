@@ -107,6 +107,7 @@ async def run_agent_pipeline(
         model=config.mimo.chat_model,
         fallback_provider=deepseek,  # 备选: DeepSeek
         fallback_model=config.deepseek.chat_model,
+        enable_streaming=config.agent.enable_streaming,
     )
     sender = SenderAgent(
         bus=bus,
@@ -292,6 +293,7 @@ async def run_cli_interactive() -> None:
         model=config.mimo.chat_model,
         fallback_provider=deepseek,
         fallback_model=config.deepseek.chat_model,
+        enable_streaming=config.agent.enable_streaming,
     )
     sender = SenderAgent(
         bus=bus,

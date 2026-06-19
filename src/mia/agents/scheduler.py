@@ -31,6 +31,9 @@ from mia.bus.message import (
     make_execute_task,
     make_send_text,
     make_send_voice,
+    make_stream_start,
+    make_stream_chunk,
+    make_stream_end,
 )
 from mia.providers.base import BaseProvider
 
@@ -54,12 +57,14 @@ SCHEDULER_SYSTEM_PROMPT = """你是一个智能调度员(Scheduler)。你的职�
 ```
 
 ### action = "reply" — 回复用户
+如果是语音回复 (use_voice=true)，请在 action_detail.message 中包含完整回复文本。
+如果是文字回复 (use_voice=false)，不需要提供 message 字段（系统会自动流式生成回复），但可以提供简短的 message 作为 fallback。
 ```json
 {
   "reasoning": "...",
   "action": "reply",
   "action_detail": {
-    "message": "要发送给用户的完整回复文本",
+    "message": "回复文本（仅 use_voice=true 时必填，use_voice=false 时可选）",
     "use_voice": false
   }
 }
@@ -101,9 +106,9 @@ SCHEDULER_SYSTEM_PROMPT = """你是一个智能调度员(Scheduler)。你的职�
 5. 如果连续2次任务都没进展，改为 reply 告诉用户当前情况
 
 ## 回复格式要求
-- message 字段中的文本应该简洁明了，控制在 200 字以内
+- 文字回复 (use_voice=false) 时无需提供 message 字段，系统会自动流式生成
+- 语音回复 (use_voice=true) 时 message 字段必填，简洁明了控制在 200 字以内
 - 不要在 message 中使用多级列表或复杂格式
-- 如果信息较多，只提取最重要的部分
 - 严禁在 message 中使用未转义的双引号
 
 ## 可用工具
@@ -114,6 +119,19 @@ TaskAgent 可以使用以下工具:
 - file: 读写文件
 
 请严格返回 JSON 格式的决策，不要有任何其他文字。"""
+
+
+# ─── Reply System Prompt (流式回复用) ─────────────────────
+
+REPLY_SYSTEM_PROMPT = """你是一个智能助手 MIA。根据对话上下文生成自然、有帮助的回复。
+
+## 要求
+- 简洁明了，控制在 300 字以内
+- 如果用户询问了具体信息，准确回答
+- 如果涉及工具执行结果，准确引用其中的数据和结论
+- 语气友好自然，像朋友聊天一样
+- 直接输出回复文本，不要加任何前缀、标签或格式标记
+- 不要输出 JSON、代码块或其他结构化格式"""
 
 
 # ─── SchedulerAgent ───────────────────────────────────────
@@ -137,6 +155,7 @@ class SchedulerAgent(BaseAgent):
         model: Optional[str] = None,
         fallback_provider: Optional[BaseProvider] = None,
         fallback_model: Optional[str] = None,
+        enable_streaming: bool = True,
     ):
         """
         Args:
@@ -145,12 +164,14 @@ class SchedulerAgent(BaseAgent):
             model: 模型名 (None 则用 Provider 默认)
             fallback_provider: 备选 Provider (主 Provider 失败时使用)
             fallback_model: 备选模型名
+            enable_streaming: 是否启用流式输出 (False 时降级为非流式)
         """
         super().__init__(name="scheduler", bus=bus)
         self.provider = provider
         self.model = model
         self.fallback_provider = fallback_provider
         self.fallback_model = fallback_model
+        self.enable_streaming = enable_streaming
 
         # 当前会话状态 (每轮对话重置)
         self._session_id: Optional[str] = None
@@ -385,16 +406,27 @@ class SchedulerAgent(BaseAgent):
             message = detail.get("message", "")
             use_voice = detail.get("use_voice", False)
 
-            self._print_thought(f"决策: 回复用户", message)
-
             if use_voice:
+                # 语音回复：需要完整文本 → 非流式路径
+                # 如果 decision JSON 中没有 message (不太可能但做 fallback)
+                if not message:
+                    message = await self._generate_fallback_reply(trigger_msg)
+                self._print_thought("决策: 语音回复用户", message[:100])
                 voice = detail.get("voice", "冰糖")
                 await self.send(make_send_voice(
                     message=message,
                     voice=voice,
                     session_id=self._session_id,
                 ))
+            elif self.enable_streaming:
+                # 文字回复：流式输出！
+                self._print_thought("决策: 流式回复用户", "")
+                await self._stream_reply(trigger_msg)
             else:
+                # 文字回复：流式关闭 → 非流式 fallback
+                if not message:
+                    message = await self._generate_fallback_reply(trigger_msg)
+                self._print_thought("决策: 回复用户", message[:100])
                 await self.send(make_send_text(
                     message=message,
                     session_id=self._session_id,
@@ -449,6 +481,173 @@ class SchedulerAgent(BaseAgent):
         else:
             logger.warning("[Scheduler] 未知 action: {}, 降级为 reply", action)
             await self._force_reply("处理完成。")
+
+    # ─── 流式回复 ──────────────────────────────────────
+
+    async def _stream_reply(self, trigger_msg: Message) -> None:
+        """流式生成回复 — 逐 token 推送给 SenderAgent
+
+        调用 Provider.chat_stream() 获取文本 token 流，
+        通过 MessageBus 的 STREAM_START/CHUNK/END 消息
+        实时推送给 SenderAgent 进行逐字输出。
+
+        包含完整的 fallback 链：主 Provider → 备选 Provider → 错误降级。
+        """
+        # 1. 构建流式回复的 LLM 上下文
+        reply_messages = self._build_reply_context(trigger_msg)
+
+        # 2. 通知 Sender 准备接收流式文本
+        await self.bus.publish(make_stream_start(session_id=self._session_id))
+
+        # 3. 流式生成 — 主 Provider + 备选 fallback
+        full_text = ""
+        stream_error = None
+
+        try:
+            # 尝试主 Provider
+            async for chunk in self.provider.chat_stream(
+                messages=reply_messages,
+                model=self.model,
+                max_tokens=2048,
+                temperature=0.7,
+            ):
+                full_text += chunk
+                await self.bus.publish(make_stream_chunk(
+                    delta=chunk,
+                    session_id=self._session_id,
+                ))
+        except Exception as e:
+            stream_error = e
+            logger.warning(
+                "[Scheduler] 主 Provider 流式失败: {}，尝试 fallback", e,
+            )
+
+        # 主 Provider 失败 → 尝试备选
+        if stream_error and self.fallback_provider:
+            full_text = ""  # 重置，重新生成
+            try:
+                logger.info(
+                    "[Scheduler] 流式使用备选 Provider: {}",
+                    self.fallback_provider.__class__.__name__,
+                )
+                async for chunk in self.fallback_provider.chat_stream(
+                    messages=reply_messages,
+                    model=self.fallback_model,
+                    max_tokens=2048,
+                    temperature=0.7,
+                ):
+                    full_text += chunk
+                    await self.bus.publish(make_stream_chunk(
+                        delta=chunk,
+                        session_id=self._session_id,
+                    ))
+                stream_error = None  # fallback 成功
+            except Exception as e2:
+                stream_error = e2
+                logger.error("[Scheduler] 备选 Provider 流式也失败: {}", e2)
+
+        # 两个 Provider 都失败 → 最终降级
+        if stream_error and not full_text:
+            full_text = f"抱歉，系统处理遇到问题：{stream_error}"
+            await self.bus.publish(make_stream_chunk(
+                delta=full_text,
+                session_id=self._session_id,
+            ))
+
+        # 4. 通知 Sender 流结束 (携带完整文本供 MemoryAgent 存储)
+        await self.bus.publish(make_stream_end(
+            full_message=full_text,
+            session_id=self._session_id,
+        ))
+        logger.info("[Scheduler] 流式回复完成, len={}", len(full_text))
+
+    def _build_reply_context(self, trigger_msg: Message) -> list[dict]:
+        """构建流式回复的 LLM 上下文消息列表
+
+        包含:
+          - REPLY_SYSTEM_PROMPT (纯文本回复指令)
+          - 跨对话记忆上下文 (来自 MemoryAgent)
+          - 决策历史 (最近 3 轮)
+          - 当前触发消息
+        """
+        messages = [
+            {"role": "system", "content": REPLY_SYSTEM_PROMPT},
+        ]
+
+        # 注入 MemoryAgent 提供的记忆上下文
+        memory_context = trigger_msg.payload.get("memory_context", "")
+        if memory_context:
+            messages.append({
+                "role": "user",
+                "content": f"## 跨对话记忆上下文 (来自 MemoryAgent)\n{memory_context}",
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "已了解之前的对话历史和用户偏好，我会基于这些上下文生成回复。",
+            })
+
+        # 注入决策历史 (最近 3 轮，精简版)
+        if self._decision_history:
+            history_parts = ["## 之前的决策历史"]
+            for i, d in enumerate(self._decision_history[-3:]):
+                action = d.get("action", "?")
+                reasoning = d.get("reasoning", "")[:150]
+                history_parts.append(
+                    f"第{i+1}轮: action={action}, reasoning={reasoning}"
+                )
+            messages.append({
+                "role": "user",
+                "content": "\n".join(history_parts),
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "已了解。请给我最新的消息，我来生成回复。",
+            })
+
+        # 当前触发消息
+        import json as _json
+        payload_str = _json.dumps(
+            trigger_msg.payload, ensure_ascii=False, indent=2,
+        )
+        messages.append({
+            "role": "user",
+            "content": (
+                f"当前消息:\n{payload_str}\n\n"
+                f"请生成回复（直接输出文本，不要 JSON 或其他格式）："
+            ),
+        })
+
+        return messages
+
+    async def _generate_fallback_reply(
+        self, trigger_msg: Message,
+    ) -> str:
+        """非流式生成回复 — 用于流式关闭或语音需要完整文本时的降级
+
+        直接调用 chat_sync 拿到完整文本，不经过流式管道。
+        """
+        reply_messages = self._build_reply_context(trigger_msg)
+        try:
+            response = await self.provider.chat_sync(
+                messages=reply_messages,
+                model=self.model,
+                max_tokens=2048,
+                temperature=0.7,
+            )
+            return response
+        except Exception as e:
+            logger.warning("[Scheduler] fallback 回复生成失败: {}", e)
+            if self.fallback_provider:
+                try:
+                    return await self.fallback_provider.chat_sync(
+                        messages=reply_messages,
+                        model=self.fallback_model,
+                        max_tokens=2048,
+                        temperature=0.7,
+                    )
+                except Exception as e2:
+                    logger.error("[Scheduler] fallback 备选也失败: {}", e2)
+            return f"抱歉，系统处理遇到问题：{e}"
 
     # ─── 辅助方法 ──────────────────────────────────────
 

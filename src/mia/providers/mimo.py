@@ -112,6 +112,34 @@ class MiMoProvider(BaseProvider):
         )
         return response.choices[0].message.content or ""
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[str]:
+        """流式对话 — 逐 token 返回文本增量
+
+        调用 self.chat(stream=True) 获取 OpenAI 兼容的 SSE 流，
+        然后逐个 chunk 提取 delta.content 并 yield。
+
+        用法:
+            async for delta in provider.chat_stream(messages, ...):
+                print(delta, end="", flush=True)
+        """
+        stream = await self.chat(
+            messages=messages,
+            model=model,
+            stream=True,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        async for chunk in stream:
+            # OpenAI 兼容流格式: chunk.choices[0].delta.content
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     # ─── 图片理解 (Vision) ───────────────────────────────────────
 
     async def understand_image(
