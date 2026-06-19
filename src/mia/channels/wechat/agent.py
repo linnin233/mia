@@ -308,14 +308,18 @@ class WeChatAgent(BaseAgent):
                 )
 
                 # ─── 2. 上传到微信 CDN 并发送 ────────────
+                # 注意: iLink Bot API 不支持 type=3 voice_item 发送，
+                # 只能以文件形式（type=4 file_item）发送音频。
+                # 参考 linninpaw: "WeChat has no dedicated audio send"
                 try:
+                    filename = f"mia_voice.{audio_format}"
                     upload_result = await self._client.upload_media(
                         str(audio_path),
-                        media_type=4,  # 4 = 语音
+                        media_type=4,  # 4 = 语音（上传格式）
                         to_user_id=to_user_id,
                     )
 
-                    # 发送 voice_item 消息
+                    # 以文件消息形式发送（用户在微信点击即可播放）
                     resp = await self._client.sendmessage(
                         {
                             "to_user_id": to_user_id,
@@ -325,8 +329,8 @@ class WeChatAgent(BaseAgent):
                             "context_token": context_token,
                             "item_list": [
                                 {
-                                    "type": 3,  # voice_item
-                                    "voice_item": {
+                                    "type": 4,  # file_item（非 voice_item）
+                                    "file_item": {
                                         "media": {
                                             "encrypt_query_param": (
                                                 upload_result[
@@ -338,6 +342,10 @@ class WeChatAgent(BaseAgent):
                                             ],
                                             "encrypt_type": 1,
                                         },
+                                        "file_name": filename,
+                                        "len": str(
+                                            upload_result["filesize"]
+                                        ),
                                     },
                                 },
                             ],
@@ -348,12 +356,12 @@ class WeChatAgent(BaseAgent):
                     if ret == 0:
                         audio_sent = True
                         logger.info(
-                            "[WeChatAgent] 语音消息已发送 to %s",
+                            "[WeChatAgent] 语音文件已发送 to %s",
                             to_user_id[:20],
                         )
                     else:
                         logger.warning(
-                            "[WeChatAgent] 语音消息发送被拒: ret=%s",
+                            "[WeChatAgent] 语音文件发送被拒: ret=%s",
                             ret,
                         )
                 except Exception as upload_err:
