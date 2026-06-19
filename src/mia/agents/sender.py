@@ -163,6 +163,12 @@ class SenderAgent(BaseAgent):
             filepath.write_bytes(audio_bytes)
 
             print(f"   \033[90m└─\033[0m 语音文件: {filepath}")
+
+            # 自动播放语音 (后台线程，不阻塞)
+            import asyncio as _asyncio
+            _asyncio.get_event_loop().run_in_executor(
+                None, _play_audio_file, str(filepath),
+            )
             print()
             print(f"\033[1m{'-'*50}\033[0m")
 
@@ -175,7 +181,7 @@ class SenderAgent(BaseAgent):
             print()
             print(f"\033[1m{'-'*50}\033[0m")
 
-        # 通知 main 对话已完成 (修复: 之前少了这一步，导致语音回复后 Main 超时)
+        # 通知 main 对话已完成
         await self.bus.publish(Message(
             msg_type=MessageType.CONVERSATION_DONE,
             source=self.name,
@@ -192,3 +198,15 @@ class SenderAgent(BaseAgent):
             payload={"message": message},
             session_id=msg.session_id,
         ))
+
+
+# ─── 播放辅助函数 (模块级，供 executor 线程调用) ───
+
+def _play_audio_file(filepath: str) -> None:
+    """在后台线程中播放音频文件 — 静默失败不影响主流程"""
+    try:
+        from mia.audio.playback import play_audio
+        play_audio(filepath, blocking=False)
+    except Exception:
+        pass  # 播放失败不打扰用户
+
