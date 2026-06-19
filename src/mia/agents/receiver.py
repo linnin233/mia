@@ -72,12 +72,12 @@ class ReceiverAgent(BaseAgent):
             if img_desc:
                 intent_parts.append(f"图片内容: {img_desc}")
 
-        # ─── 处理语音 ───────────────────────────────
+        # ─── 处理语音 (多模态理解，非纯 ASR) ──────
         if voice_path:
             media_refs.append(voice_path)
-            voice_text = await self._transcribe_voice(voice_path)
-            if voice_text:
-                intent_parts.append(f"语音内容: {voice_text}")
+            voice_understanding = await self._understand_audio(voice_path, text)
+            if voice_understanding:
+                intent_parts.append(f"语音理解: {voice_understanding}")
 
         # ─── 构建 USER_INTENT ────────────────────────
         if not intent_parts:
@@ -154,15 +154,28 @@ class ReceiverAgent(BaseAgent):
             logger.error("[Receiver] 图片理解失败: {}", e)
             return f"[图片理解失败: {e}]"
 
-    async def _transcribe_voice(self, voice_path: str) -> Optional[str]:
+    async def _understand_audio(
+        self,
+        voice_path: str,
+        context: str = "",
+    ) -> Optional[str]:
         """
-        调用 MiMo ASR 识别语音
+        多模态音频理解 — 使用 MiMo-V2.5 原生理解音频内容、情感和意图
+
+        与旧版 _transcribe_voice() 的区别:
+          - 旧: 用专用 ASR 模型 (mimo-v2.5-asr) 只做文字转写
+          - 新: 用多模态模型 (mimo-v2.5) 同时理解内容、情绪、语气、意图
+
+        MiMo-V2.5 有 261M 参数的 Audio Transformer，可以原生理解音频，
+        不需要先转文字再分析的两步流程。
 
         Args:
-            voice_path: 音频文件路径
+            voice_path: 音频文件路径 (支持 wav/mp3/m4a/ogg)
+            context: 用户同时发送的文本 (辅助理解)
 
         Returns:
-            识别出的文本，失败返回 None
+            模型对音频的理解文本 (包含转写内容 + 情绪意图分析)，
+            失败返回 None
         """
         try:
             path = Path(voice_path)
@@ -170,6 +183,7 @@ class ReceiverAgent(BaseAgent):
                 logger.error("[Receiver] 音频文件不存在: {}", voice_path)
                 return None
 
+            # 根据扩展名确定 MIME 类型
             ext = path.suffix.lower()
             mime_map = {
                 ".wav": "audio/wav",
@@ -180,10 +194,30 @@ class ReceiverAgent(BaseAgent):
             mime_type = mime_map.get(ext, "audio/wav")
             audio_data = MiMoProvider.encode_audio_file(str(path), mime_type)
 
-            text = await self.mimo.transcribe(audio_data)
-            logger.info("[Receiver] 语音识别完成: {}", text)
-            return text
+            # 构建多模态理解 prompt
+            # 包含上下文文本（如有）帮助模型更准确理解
+            context_hint = f"用户同时输入了文字: {context}" if context else ""
+            prompt = (
+                f"请理解这段语音内容。{context_hint}\n"
+                "请完成以下任务:\n"
+                "1. 转写语音的文字内容\n"
+                "2. 分析说话人的情绪状态（如高兴、焦虑、愤怒、平静等）\n"
+                "3. 判断说话人的意图和目的\n"
+                "请简洁回复，直接给出分析结果。"
+            )
+
+            understanding = await self.mimo.understand_audio(audio_data, prompt=prompt)
+            logger.info("[Receiver] 多模态音频理解完成: {}", understanding)
+            return understanding
 
         except Exception as e:
-            logger.error("[Receiver] 语音识别失败: {}", e)
-            return f"[语音识别失败: {e}]"
+            logger.error("[Receiver] 多模态音频理解失败: {}，降级为纯 ASR", e)
+            # 降级: 多模态失败时回退到纯 ASR 转写
+            try:
+                audio_data = MiMoProvider.encode_audio_file(str(Path(voice_path)), "audio/wav")
+                text = await self.mimo.transcribe(audio_data)
+                logger.info("[Receiver] ASR 降级转写完成: {}", text)
+                return f"[降级转写] {text}"
+            except Exception as e2:
+                logger.error("[Receiver] ASR 降级也失败: {}", e2)
+                return f"[音频理解失败: {e}]"

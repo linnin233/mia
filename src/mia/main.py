@@ -385,6 +385,8 @@ async def run_cli_interactive() -> None:
   /verbose          — 切换详细日志 (默认开启，关闭后只显示概要)
   /memory           — 显示当前对话记忆状态
   /image <path>     — 发送图片 (下一行输入)
+  /voice <path>     — 发送语音/音频文件 (下一行可选输入文字)
+  /record           — 从麦克风录音并发送
   直接输入文本       — 开始对话
 
 示例:
@@ -393,6 +395,10 @@ async def run_cli_interactive() -> None:
   You > /compact
   You > /image screenshot.png
   You > 分析这张截图
+  You > /voice meeting.mp3
+  You > 总结这段会议录音
+  You > /record
+  [录音中...] 按 Enter 停止 → 自动理解并回复
 """)
                 continue
 
@@ -423,16 +429,66 @@ async def run_cli_interactive() -> None:
 
             # /image — 图片输入
             image_path = None
+            voice_path = None
             if user_input.lower().startswith("/image "):
                 image_path = user_input[7:].strip()
                 user_input = input("\033[32mYou (图片说明) > \033[0m").strip()
                 if not user_input:
                     user_input = "请描述这张图片"
 
+            # /voice — 语音/音频输入 (多模态理解)
+            if user_input.lower().startswith("/voice "):
+                voice_path = user_input[7:].strip()
+                # 使用 run_in_executor 避免 input() 阻塞事件循环
+                user_input = (await loop.run_in_executor(
+                    None, input, "\033[32mYou (语音说明/可选) > \033[0m"
+                )).strip()
+                if not user_input:
+                    user_input = "请理解这段语音的内容和意图"
+
+            # /record — 麦克风录音输入
+            if user_input.lower() == "/record":
+                try:
+                    from mia.audio.recorder import record_until_keypress
+
+                    # 等待用户准备好 (run_in_executor 避免阻塞事件循环)
+                    await loop.run_in_executor(
+                        None, input,
+                        "  \033[33m[录音]\033[0m 准备好后按 Enter 开始录音...\n",
+                    )
+
+                    print("  \033[33m[录音]\033[0m \033[91m● 正在录音... 按 Enter 停止\033[0m")
+
+                    # 在 executor 线程中录音 (内部 input() 等待用户停止)
+                    voice_path = await loop.run_in_executor(
+                        None, record_until_keypress,
+                    )
+
+                    if voice_path:
+                        print(f"  \033[32m[OK]\033[0m 录音完成 ({voice_path})")
+                        user_input = (await loop.run_in_executor(
+                            None, input, "\033[32mYou (语音说明/可选) > \033[0m"
+                        )).strip()
+                        if not user_input:
+                            user_input = "请理解这段语音的内容和意图"
+                    else:
+                        print("  \033[31m[FAIL]\033[0m 录音失败或为空，请重试")
+                        print()
+                        continue
+                except ImportError as e:
+                    print(f"  \033[31m[FAIL]\033[0m 缺少录音依赖: {e}")
+                    print(f"  \033[90m请运行: pip install sounddevice soundfile\033[0m")
+                    print()
+                    continue
+                except Exception as e:
+                    print(f"  \033[31m[FAIL]\033[0m 录音异常: {e}")
+                    print()
+                    continue
+
             # ─── 拦截所有以 / 开头的未知命令，不进入 Agent 链 ───
             if user_input.startswith("/"):
                 # 尝试模糊匹配给出建议
-                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/verbose", "/memory", "/image"]
+                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/verbose", "/memory", "/image", "/voice", "/record"]
                 cmd_lower = user_input.lower()
                 suggestions = [c for c in known_commands if c.startswith(cmd_lower[:3])]
                 if suggestions:
@@ -453,7 +509,7 @@ async def run_cli_interactive() -> None:
                 payload={
                     "text": user_input,
                     "image": image_path,
-                    "voice": None,
+                    "voice": voice_path,
                 },
                 session_id=session_id,
             )

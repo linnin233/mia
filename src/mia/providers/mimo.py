@@ -182,7 +182,7 @@ class MiMoProvider(BaseProvider):
             b64 = base64.b64encode(f.read()).decode("utf-8")
         return f"data:{mime_type};base64,{b64}"
 
-    # ─── 语音识别 (ASR) ──────────────────────────────────────────
+    # ─── 语音识别 (ASR) — 单独 ASR 模型 ──────────────────────────
 
     async def transcribe(
         self,
@@ -190,7 +190,10 @@ class MiMoProvider(BaseProvider):
         language: str = "auto",
     ) -> str:
         """
-        语音识别 — 将音频转为文本
+        语音识别 — 使用专用 ASR 模型将音频转为纯文本
+
+        注意: 此方法使用 mimo-v2.5-asr 模型，只做文字转写。
+        如需理解语气/情感/意图，请使用 understand_audio()。
 
         Args:
             audio_data: data:audio/xxx;base64,... 格式的音频
@@ -212,6 +215,53 @@ class MiMoProvider(BaseProvider):
             messages=messages,
             stream=False,
             extra_body={"asr_options": {"language": language}},
+        )
+        return response.choices[0].message.content or ""
+
+    # ─── 多模态音频理解 (MiMo-V2.5 原生) ──────────────────────
+
+    async def understand_audio(
+        self,
+        audio_data: str,
+        prompt: str = "请转写这段语音的内容，并分析说话人的情绪和意图。",
+        model: Optional[str] = None,
+    ) -> str:
+        """
+        多模态音频理解 — 使用 MiMo-V2.5 原生理解音频内容、语气、情感和意图
+
+        与 transcribe() 的区别:
+          - transcribe() 用专用 ASR 模型 (mimo-v2.5-asr)，只做文字转写
+          - understand_audio() 用多模态模型 (mimo-v2.5)，可以同时理解:
+            · 文字内容 (转写)
+            · 说话人情绪
+            · 语气/语调
+            · 意图/目的
+            · 背景信息
+
+        MiMo-V2.5 有 261M 参数的 Audio Transformer，可以原生理解音频，
+        不需要先转文字再分析的两步流程。
+
+        Args:
+            audio_data: data:audio/xxx;base64,... 格式的音频
+            prompt: 理解指令 (可以要求转写、总结、分析情绪等)
+            model: 模型名 (默认 mimo-v2.5 多模态)
+
+        Returns:
+            模型对音频的理解文本 (包含转写内容和分析)
+        """
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "input_audio", "input_audio": {"data": audio_data}},
+                {"type": "text", "text": prompt},
+            ],
+        }]
+
+        response = await self.client.chat.completions.create(
+            model=model or self.VISION_MODEL,  # mimo-v2.5 多模态
+            messages=messages,
+            max_tokens=1024,
+            stream=False,
         )
         return response.choices[0].message.content or ""
 
