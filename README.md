@@ -42,15 +42,17 @@ flowchart LR
 - **LLM 决策循环** — Scheduler 不断分析状态 → 派发任务 → 观察结果 → 决定回复，而非一次性生成
 - **两级知识记忆** — 临时记忆 (Level 1) + 持久知识 (Level 2)，从对话中自动提炼知识点，支持跨轮关联
 - **微信通信渠道** — 接入微信个人号 (iLink Bot API)，支持文字/语音/图片消息，SILK→WAV 解码 + TTS→CDN 语音发送
-- **渠道感知路由** — session_id 编码消息来源，回复自动回到原渠道 (微信→微信, CLI→终端)，互不干扰
+- **渠道路由** — session_id 编码来源，回复自动原路返回 (微信⇢微信, CLI⇢终端)，互不干扰
+- **总线记忆镜像** — MessageBus 自动镜像投递给 MemoryAgent，不依赖显式 CONVERSATION_DONE
 - **对话历史注入** — 每轮自动将最近 N 轮对话原文注入 LLM 上下文，解决指代和连续对话问题
+- **收发分离** — WeChat 拆为 WeChatReceiver + WeChatSender，context_token 通过 payload 透传
 - **可插拔 Provider** — 支持 OpenAI / MiMo / DeepSeek 或任意兼容 API，通过 `.env` 配置切换
 - **消息总线架构** — Agent 间通过 MessageBus 松耦合通信，每个 Agent 独立运行在事件循环中
 - **多模态输入** — 支持文本、图片 (MiMo VL)、语音 (MiMo-V2.5 多模态理解 — 内容+情绪+意图)
 - **语音收发** — 入站 SILK→WAV 转码 (pilk) → MiMo 多模态理解；出站 TTS→CDN 上传→微信 file_item 发送
 - **工具调用** — TaskAgent 支持天气查询、DuckDuckGo 搜索、Shell 命令、文件操作
-- **TUI 记忆浏览器** — `/memory` 命令提供交互式知识浏览 (3 级钻取)
-- **持久化存储** — 知识条目按日期分片存储，index + daily JSON 文件架构
+- **TUI 记忆浏览器** — `/memory` 命令提供全量加载、按日期分组、分页浏览 (10条/页) + 详情 rich.Table
+- **持久化存储** — 知识条目按日期分片存储，index + daily JSON 文件架构，关闭时自动落盘
 
 ## 快速开始
 
@@ -133,11 +135,12 @@ mia/
 │   │   ├── scheduler.py  # LLM 决策循环 + 渠道感知路由
 │   │   ├── task.py       # 工具调用
 │   │   └── sender.py     # 终端输出 (文本/流式/语音)
-│   ├── channels/         # 通信渠道 (可选)
-│   │   └── wechat/       # 微信 iLink Bot 渠道
-│   │       ├── agent.py  # WeChatAgent (长轮询 + 消息收发)
-│   │       ├── client.py # ILinkClient (iLink HTTP API)
-│   │       └── utils.py  # AES-128-ECB 加解密
+│   ├── channels/         # 通信渠道 (可选, 收发分离)
+│   │   └── wechat/
+│   │       ├── receiver.py # WeChatReceiverAgent (入站长轮询+SILK解码)
+│   │       ├── sender.py   # WeChatSenderAgent (出站TTS+CDN发送)
+│   │       ├── client.py   # ILinkClient (iLink HTTP API)
+│   │       └── utils.py    # AES-128-ECB 加解密 + 请求头
 │   ├── audio/            # 音频子系统
 │   │   ├── recorder.py   # 麦克风录音
 │   │   └── playback.py   # 本地音频播放
