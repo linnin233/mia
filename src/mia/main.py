@@ -106,12 +106,7 @@ async def run_agent_pipeline(
     mimo = MiMoProvider(api_key=config.mimo.api_key)
     deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
 
-    # ─── 3. 确定输出目标 ──────────────────────────────
-    output_targets = ["sender"]
-    if enable_wechat:
-        output_targets.append("wechat")
-
-    # ─── 4. 创建所有 Agent ────────────────────────────
+    # ─── 3. 创建所有 Agent ────────────────────────────
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
@@ -120,7 +115,6 @@ async def run_agent_pipeline(
         fallback_provider=deepseek,  # 备选: DeepSeek
         fallback_model=config.deepseek.chat_model,
         enable_streaming=config.agent.enable_streaming,
-        output_targets=output_targets,  # 多渠道输出
     )
     sender = SenderAgent(
         bus=bus,
@@ -347,11 +341,6 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
     mimo = MiMoProvider(api_key=config.mimo.api_key)
     deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
 
-    # ─── 确定输出目标 ──────────────────────────────
-    output_targets = ["sender"]
-    if enable_wechat:
-        output_targets.append("wechat")
-
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
@@ -360,7 +349,6 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
         fallback_provider=deepseek,
         fallback_model=config.deepseek.chat_model,
         enable_streaming=config.agent.enable_streaming,
-        output_targets=output_targets,  # 多渠道输出
     )
     sender = SenderAgent(
         bus=bus,

@@ -142,7 +142,6 @@ class SchedulerAgent(BaseAgent):
         fallback_provider: Optional[BaseProvider] = None,
         fallback_model: Optional[str] = None,
         enable_streaming: bool = True,
-        output_targets: Optional[list[str]] = None,
     ):
         """
         Args:
@@ -152,7 +151,6 @@ class SchedulerAgent(BaseAgent):
             fallback_provider: 备选 Provider (主 Provider 失败时使用)
             fallback_model: 备选模型名
             enable_streaming: 是否启用流式输出 (False 时降级为非流式)
-            output_targets: 输出目标列表（默认 ["sender"]，微信启用时为 ["sender", "wechat"]）
         """
         super().__init__(name="scheduler", bus=bus)
         self.provider = provider
@@ -160,7 +158,6 @@ class SchedulerAgent(BaseAgent):
         self.fallback_provider = fallback_provider
         self.fallback_model = fallback_model
         self.enable_streaming = enable_streaming
-        self._output_targets = output_targets or ["sender"]
 
         # 当前会话状态 (每轮对话重置)
         self._session_id: Optional[str] = None
@@ -402,14 +399,13 @@ class SchedulerAgent(BaseAgent):
                     message = await self._generate_fallback_reply(trigger_msg)
                 self._print_thought("决策: 语音回复用户", reasoning)
                 voice = detail.get("voice", "冰糖")
-                # 发送到所有输出目标 (终端 Sender + 微信 WeChatAgent 等)
-                for target in self._output_targets:
-                    await self.bus.publish(make_send_voice(
-                        message=message,
-                        voice=voice,
-                        session_id=self._session_id,
-                        target=target,
-                    ))
+                target = self._resolve_output_target()
+                await self.bus.publish(make_send_voice(
+                    message=message,
+                    voice=voice,
+                    session_id=self._session_id,
+                    target=target,
+                ))
             elif self.enable_streaming:
                 # 文字回复：流式输出！
                 self._print_thought("决策: 流式回复用户", reasoning)
@@ -419,12 +415,12 @@ class SchedulerAgent(BaseAgent):
                 if not message:
                     message = await self._generate_fallback_reply(trigger_msg)
                 self._print_thought("决策: 回复用户", reasoning)
-                for target in self._output_targets:
-                    await self.bus.publish(make_send_text(
-                        message=message,
-                        session_id=self._session_id,
-                        target=target,
-                    ))
+                target = self._resolve_output_target()
+                await self.bus.publish(make_send_text(
+                    message=message,
+                    session_id=self._session_id,
+                    target=target,
+                ))
             logger.info("[Scheduler] 对话完成, action=reply")
 
         elif action == "execute_task":
@@ -490,12 +486,12 @@ class SchedulerAgent(BaseAgent):
         # 1. 构建流式回复的 LLM 上下文
         reply_messages = self._build_reply_context(trigger_msg)
 
-        # 2. 通知所有输出目标准备接收流式文本
-        for target in self._output_targets:
-            await self.bus.publish(make_stream_start(
-                session_id=self._session_id,
-                target=target,
-            ))
+        # 2. 通知输出目标准备接收流式文本
+        target = self._resolve_output_target()
+        await self.bus.publish(make_stream_start(
+            session_id=self._session_id,
+            target=target,
+        ))
 
         # 3. 流式生成 — 主 Provider + 备选 fallback
         full_text = ""
@@ -510,13 +506,12 @@ class SchedulerAgent(BaseAgent):
                 temperature=0.7,
             ):
                 full_text += chunk
-                # 推送增量到所有输出目标
-                for target in self._output_targets:
-                    await self.bus.publish(make_stream_chunk(
-                        delta=chunk,
-                        session_id=self._session_id,
-                        target=target,
-                    ))
+                target = self._resolve_output_target()
+                await self.bus.publish(make_stream_chunk(
+                    delta=chunk,
+                    session_id=self._session_id,
+                    target=target,
+                ))
         except Exception as e:
             stream_error = e
             logger.warning(
@@ -538,12 +533,12 @@ class SchedulerAgent(BaseAgent):
                     temperature=0.7,
                 ):
                     full_text += chunk
-                    for target in self._output_targets:
-                        await self.bus.publish(make_stream_chunk(
-                            delta=chunk,
-                            session_id=self._session_id,
-                            target=target,
-                        ))
+                    target = self._resolve_output_target()
+                    await self.bus.publish(make_stream_chunk(
+                        delta=chunk,
+                        session_id=self._session_id,
+                        target=target,
+                    ))
                 stream_error = None  # fallback 成功
             except Exception as e2:
                 stream_error = e2
@@ -552,20 +547,20 @@ class SchedulerAgent(BaseAgent):
         # 两个 Provider 都失败 → 最终降级
         if stream_error and not full_text:
             full_text = f"抱歉，系统处理遇到问题：{stream_error}"
-            for target in self._output_targets:
-                await self.bus.publish(make_stream_chunk(
-                    delta=full_text,
-                    session_id=self._session_id,
-                    target=target,
-                ))
-
-        # 4. 通知所有输出目标流结束 (携带完整文本供 MemoryAgent 存储)
-        for target in self._output_targets:
-            await self.bus.publish(make_stream_end(
-                full_message=full_text,
+            target = self._resolve_output_target()
+            await self.bus.publish(make_stream_chunk(
+                delta=full_text,
                 session_id=self._session_id,
                 target=target,
             ))
+
+        # 4. 通知输出目标流结束 (携带完整文本供 MemoryAgent 存储)
+        target = self._resolve_output_target()
+        await self.bus.publish(make_stream_end(
+            full_message=full_text,
+            session_id=self._session_id,
+            target=target,
+        ))
         logger.info("[Scheduler] 流式回复完成, len={}", len(full_text))
 
     def _build_reply_context(self, trigger_msg: Message) -> list[dict]:
@@ -658,6 +653,27 @@ class SchedulerAgent(BaseAgent):
 
     # ─── 辅助方法 ──────────────────────────────────────
 
+    def _resolve_output_target(self) -> str:
+        """根据 session_id 前缀确定回复目标 Agent
+
+        session_id 编码了消息来源渠道:
+          - "wechat:<user_id>" → 回复到微信 (WeChatAgent)
+          - "<uuid_hex>" (无前缀) → 回复到终端 (SenderAgent)
+
+        未来扩展: "telegram:*" → "telegram", "discord:*" → "discord"
+
+        Returns:
+            目标 Agent 名称
+        """
+        sid = self._session_id or ""
+        if ":" in sid:
+            channel = sid.split(":")[0]
+            # 已知渠道白名单 — 防止伪造
+            if channel in {"wechat"}:
+                return channel
+        # 默认: 无前缀 uuid = CLI/API → SenderAgent
+        return "sender"
+
     def _parse_decision(self, text: str) -> Optional[dict]:
         """
         从 LLM 输出中解析 JSON 决策
@@ -688,11 +704,11 @@ class SchedulerAgent(BaseAgent):
     async def _force_reply(self, message: str) -> None:
         """强制回复 — 当循环无法正常完成时使用"""
         logger.info("[Scheduler] 强制回复: {}", message)
-        for target in self._output_targets:
-            await self.bus.publish(make_send_text(
-                message=message,
-                session_id=self._session_id,
-                target=target,
+        target = self._resolve_output_target()
+        await self.bus.publish(make_send_text(
+            message=message,
+            session_id=self._session_id,
+            target=target,
             ))
 
     # ─── 跨对话记忆已迁至 MemoryAgent ──────────────
