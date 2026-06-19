@@ -411,10 +411,12 @@ class MiaTuiApp:
         self._running = True
         while self._running:
             try:
-                # 非阻塞轮询，使用短超时保持响应性
-                # 注意: 先轮询 tui 通道，确保思考过程在消息输出之前渲染
-                tui_msg = await self.bus.receive("tui", timeout=0.02)
-                if tui_msg:
+                # 排空 tui 队列 — 确保所有思考过程在流式输出之前渲染
+                # 使用短超时非阻塞轮询，一次排空所有积压的 TUI 消息
+                while True:
+                    tui_msg = await self.bus.receive("tui", timeout=0.005)
+                    if tui_msg is None:
+                        break
                     self._trace_seq += 1
                     mt_val = tui_msg.msg_type.value
                     title = tui_msg.payload.get("title", "")
@@ -424,7 +426,8 @@ class MiaTuiApp:
                     self._trace_file.flush()
                     self._handle_tui_message(tui_msg)
 
-                sender_msg = await self.bus.receive("sender", timeout=0.02)
+                # 只取一条 sender 消息 (保证流式输出及时渲染)
+                sender_msg = await self.bus.receive("sender", timeout=0.005)
                 if sender_msg:
                     self._trace_seq += 1
                     mt_val = sender_msg.msg_type.value
