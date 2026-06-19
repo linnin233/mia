@@ -1,62 +1,134 @@
 {
   "date": "2026-06-19",
-  "updated": "2026-06-19T21:06:06.010381+08:00",
+  "updated": "2026-06-19T21:08:31.916461+08:00",
   "entries": [
     {
-      "id": "030cd8369447",
-      "content": "**用户信息：** linnin233，偏好纯中文技术交流，不喜中英混杂。\n\n**项目概况：** 正在开发MIA多Agent系统，技术栈Python+asyncio，工作环境Windows",
-      "category": "insight",
-      "confidence": 0.5,
+      "id": "4f69b6bd7e53",
+      "content": "语音发送以file_item形式上传微信CDN，用户收到可点击播放的音频文件 (确认于2026-06-19)",
+      "category": "task",
+      "confidence": 0.889694145647757,
       "keywords": [
-        "摘要"
+        "语音",
+        "CDN"
       ],
-      "importance": 1.0,
-      "source_sessions": [],
-      "created_at": "2026-06-19T20:56:10.061654+08:00",
-      "updated_at": "2026-06-19T20:56:10.061654+08:00"
+      "importance": 0.839494656426951,
+      "source_sessions": [
+        "a0b4b9b543b9"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
     },
     {
-      "id": "3f7f0d4f2d75",
-      "content": "用户 linnin233 正在开发一个名为 MIA 的多 Agent 系统，技术栈是 Python + asyncio，环境为 Windows。用户的交互偏好是使用纯中文，避免中英夹杂。",
+      "id": "9a84cd18e112",
+      "content": "TUI memory浏览器从3级钻取改为全量加载+分页10条/页",
+      "category": "decision",
+      "confidence": 0.8353325065975686,
+      "keywords": [
+        "TUI",
+        "分页"
+      ],
+      "importance": 0.721372523626774,
+      "source_sessions": [
+        "1ccc716bd794"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
+    },
+    {
+      "id": "c9ba1ca72ca1",
+      "content": "用户偏好纯中文技术交流，不喜欢中英混杂 (确认于2026-06-19)",
       "category": "preference",
-      "confidence": 0.8,
+      "confidence": 0.9331136437188295,
       "keywords": [
-        "linnin233",
-        "MIA",
-        "多Agent系统",
-        "Python",
-        "asyncio",
-        "Windows",
-        "语言偏好",
-        "纯中文"
+        "中文",
+        "偏好"
       ],
-      "importance": 0.9,
+      "importance": 0.7852457296467398,
       "source_sessions": [
-        "38749d0df2e9"
+        "94c5d00b6783"
       ],
-      "created_at": "2026-06-19T21:06:06.006443+08:00",
-      "updated_at": "2026-06-19T21:06:06.006443+08:00"
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
     },
     {
-      "id": "c417b7711b49",
-      "content": "MIA（模块化智能助手）是一个基于多Agent架构的AI系统。其核心设计包括消息总线、异步调度和跨对话记忆。系统通过接收器、记忆系统、调度器和执行器等模块协作，将用户任务分解并分派给专业模块处理，最终整合结果，以提供个性化、连贯的交互体验。",
+      "id": "f8d512d19c78",
+      "content": "Agent生命周期: start()→订阅→run()循环→stop()→取消订阅",
       "category": "fact",
-      "confidence": 0.9,
+      "confidence": 0.8870553206025149,
       "keywords": [
-        "MIA",
-        "模块化智能助手",
-        "多Agent架构",
-        "消息总线",
-        "异步调度",
-        "跨对话记忆",
-        "任务分解"
+        "生命周期",
+        "Agent"
       ],
-      "importance": 0.8,
+      "importance": 0.6169555011820208,
       "source_sessions": [
-        "wechat:o9cq80yk-Gu-y17ZzF_XdZyL9QO0@im.wechat"
+        "1adc126fbf34"
       ],
-      "created_at": "2026-06-19T21:06:06.010381+08:00",
-      "updated_at": "2026-06-19T21:06:06.010381+08:00"
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
+    },
+    {
+      "id": "f7458477df0f",
+      "content": "消息总线使用asyncio.Queue实现，每个Agent有独立信箱",
+      "category": "fact",
+      "confidence": 0.8544114375077715,
+      "keywords": [
+        "Queue",
+        "Bus"
+      ],
+      "importance": 0.7596980673985536,
+      "source_sessions": [
+        "f901e7e47ad7"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
+    },
+    {
+      "id": "b1995b4982dc",
+      "content": "用户名字是linnin233",
+      "category": "insight",
+      "confidence": 0.9196120066158606,
+      "keywords": [
+        "用户",
+        "名字"
+      ],
+      "importance": 0.8093781245582488,
+      "source_sessions": [
+        "642eaa1b34b8"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
+    },
+    {
+      "id": "90a941424d0a",
+      "content": "Agent生命周期: start()→订阅→run()循环→stop()→取消订阅 (确认于2026-06-19)",
+      "category": "fact",
+      "confidence": 0.8502372504632825,
+      "keywords": [
+        "生命周期",
+        "Agent"
+      ],
+      "importance": 0.6390667070320977,
+      "source_sessions": [
+        "75fb16a1c11e"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
+    },
+    {
+      "id": "80f305131cf0",
+      "content": "Scheduler的LLM决策循环有安全保护: 最多10轮迭代, 连续3次任务上限, 60s超时",
+      "category": "fact",
+      "confidence": 0.9130703704284235,
+      "keywords": [
+        "Scheduler",
+        "安全"
+      ],
+      "importance": 0.7492553955308716,
+      "source_sessions": [
+        "5f18cd613595"
+      ],
+      "created_at": "2026-06-19",
+      "updated_at": "2026-06-19"
     }
   ]
 }
