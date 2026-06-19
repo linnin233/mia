@@ -7,16 +7,13 @@
 ## 架构
 
 ```
-CLI / API / 微信 ──▶ Receiver ──▶ Memory ──▶ Scheduler ──┬──▶ Sender ──▶ 终端
-                  (多模态)     (记忆检索)    (LLM 决策)    │   (文本/语音)
-                                                         │
-                                                         ├──▶ TaskAgent
-                                                         │    (工具执行)
-                                                         │
-                                                         └──▶ WeChatAgent ──▶ 微信
-                                                              (渠道感知路由)
+  CLI / API / 微信 ──▶ Receiver ──▶ Memory ──▶ Scheduler ──┬──▶ Sender ──▶ 终端
+                                                           │
+                                                           ├──▶ TaskAgent (工具)
+                                                           │
+                                                           └──▶ WeChatAgent ──▶ 微信
 ```
-6 个 Agent，1 条 **MessageBus**。消息从哪来回哪去。
+6 个 Agent，1 条 **MessageBus**。输入多渠道，输出回原路。
 
 ## 特性
 
