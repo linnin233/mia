@@ -478,7 +478,8 @@ class ILinkClient:
         return {
             "encrypt_query_param": encrypt_query_param,
             "aes_key_b64": aes_key_for_msg,
-            "filesize": filesize,
+            "rawsize": rawsize,    # 明文大小（file_item.len 用）
+            "filesize": filesize,  # 密文大小（image_item.mid_size 用）
         }
 
     async def send_image(
@@ -574,7 +575,7 @@ class ILinkClient:
                                 "encrypt_type": 1,
                             },
                             "file_name": filename,
-                            "len": str(upload_result["filesize"]),
+                            "len": str(upload_result["rawsize"]),  # 明文大小
                         },
                     },
                 ],

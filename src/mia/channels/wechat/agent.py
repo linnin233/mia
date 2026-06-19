@@ -336,7 +336,7 @@ class WeChatAgent(BaseAgent):
                                         "encrypt_type": 1,
                                     },
                                     "file_name": filename,
-                                    "len": str(upload_result["filesize"]),
+                                    "len": str(upload_result["rawsize"]),  # 明文大小
                                 },
                             }],
                         },
