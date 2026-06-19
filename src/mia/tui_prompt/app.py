@@ -165,7 +165,7 @@ class MiaTuiApp:
         hint_label = Window(
             content=FormattedTextControl(
                 "Enter 发送\n"
-                "PgUp/Dn 滚动\n"
+                "^Up/Dn 滚动\n"
                 "Ctrl+C 退出\n"
                 "Esc 聚焦输入"
             ),
@@ -225,39 +225,39 @@ class MiaTuiApp:
         # ─── 滚动快捷键 ──────────────────────────────
         output_win = self._output_window  # 闭包捕获
 
-        @kb.add("pageup")
+        @kb.add("c-up")
         def _(event):
-            """PageUp: 向上滚动输出区域"""
+            """Ctrl+Up: 向上滚动输出区域"""
             try:
                 if output_win.render_info:
-                    output_win.render_info.window_scroll_up(output_win, 8)
+                    output_win.render_info.window_scroll_up(output_win, 3)
             except Exception:
                 pass
 
-        @kb.add("pagedown")
+        @kb.add("c-down")
         def _(event):
-            """PageDown: 向下滚动输出区域"""
+            """Ctrl+Down: 向下滚动输出区域"""
             try:
                 if output_win.render_info:
-                    output_win.render_info.window_scroll_down(output_win, 8)
+                    output_win.render_info.window_scroll_down(output_win, 3)
             except Exception:
                 pass
 
-        @kb.add("c-home")
+        @kb.add("escape", "c-up")
         def _(event):
-            """Ctrl+Home: 跳到最顶部"""
+            """Esc+Ctrl+Up: 跳到最顶部"""
             try:
                 if output_win.render_info:
-                    output_win.render_info.window_scroll_up(output_win, 9999)
+                    output_win.render_info.window_scroll_up(output_win, 99999)
             except Exception:
                 pass
 
-        @kb.add("c-end")
+        @kb.add("escape", "c-down")
         def _(event):
-            """Ctrl+End: 跳到最底部"""
+            """Esc+Ctrl+Down: 跳到最底部"""
             try:
                 if output_win.render_info:
-                    output_win.render_info.window_scroll_down(output_win, 9999)
+                    output_win.render_info.window_scroll_down(output_win, 99999)
             except Exception:
                 pass
 
@@ -399,8 +399,8 @@ class MiaTuiApp:
                 "  /memory — 查看记忆状态\n"
                 "  Ctrl+C — 退出  Esc — 聚焦输入\n"
                 "\n"
-                "滚动: PageUp/PageDown 翻页\n"
-                "      Ctrl+Home/Ctrl+End 跳到顶/底"
+                "滚动: Ctrl+Up/Down 上下滚\n"
+                "      Esc+Ctrl+Up/Down 跳顶/底"
             )
 
         elif command == "/compact":
