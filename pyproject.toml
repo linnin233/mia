@@ -20,6 +20,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "asyncio-throttle>=1.0.0",
     "questionary>=2.1.0",
+    "textual>=1.0.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]

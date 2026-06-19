@@ -81,6 +81,10 @@ class AgentConfig(BaseSettings):
     # 流式输出
     enable_streaming: bool = True         # 是否启用流式输出 (MIA_ENABLE_STREAMING)
 
+    # TUI 界面
+    tui_enabled: bool = True              # 是否启用 TUI 界面 (MIA_TUI_ENABLED)
+    tui_show_thoughts: bool = True        # TUI 中默认显示思考过程 (MIA_TUI_SHOW_THOUGHTS)
+
     model_config = {"env_prefix": "MIA_"}
 
 

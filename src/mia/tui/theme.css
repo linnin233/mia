@@ -1,0 +1,209 @@
+/*
+ * MIA TUI Theme — 参照 OpenCode 暗色主题配色
+ *
+ * 颜色体系:
+ *   - 背景:    #1a1b26 (Tokyo Night 暗色)
+ *   - User:    #7aa2f7 (蓝色)
+ *   - MIA:     #9ece6a (绿色)
+ *   - 思考:    #7dcfff (青色)
+ *   - 工具:    #e0af68 (橙色)
+ *   - 错误:    #f7768e (红色)
+ *   - 警告:    #e0af68 (黄色)
+ *   - 记忆:    #bb9af7 (紫色)
+ */
+
+/* ─── 全局 ─────────────────────────────────────────── */
+
+Screen {
+    background: #1a1b26;
+    color: #c0caf5;
+}
+
+/* 隐藏 Textual 默认 footer (我们用自己的状态栏) */
+Footer {
+    display: none;
+}
+
+/* ─── 状态栏 ───────────────────────────────────────── */
+
+#status-bar {
+    dock: top;
+    height: 1;
+    background: #16161e;
+    color: #565f89;
+    padding: 0 1;
+}
+
+#status-bar .key {
+    color: #7aa2f7;
+}
+
+#status-bar .value {
+    color: #c0caf5;
+}
+
+/* ─── 聊天历史 ─────────────────────────────────────── */
+
+#chat-history {
+    height: 1fr;
+    overflow-y: auto;
+    padding: 1 2;
+    scrollbar-color: #3b4261;
+    scrollbar-color-hover: #565f89;
+}
+
+/* ─── 消息气泡 ─────────────────────────────────────── */
+
+MessageBubble {
+    margin: 0 0 1 0;
+    padding: 1 2;
+    border-left: solid 3px;
+}
+
+MessageBubble.user {
+    border-left: solid 3px #7aa2f7;
+}
+
+MessageBubble.user .role-label {
+    color: #7aa2f7;
+    text-style: bold;
+}
+
+MessageBubble.assistant {
+    border-left: solid 3px #9ece6a;
+}
+
+MessageBubble.assistant .role-label {
+    color: #9ece6a;
+    text-style: bold;
+}
+
+MessageBubble .content {
+    margin: 1 0 0 0;
+    color: #c0caf5;
+}
+
+/* ─── 思考过程 (可折叠) ─────────────────────────────── */
+
+ThoughtSection {
+    margin: 0 0 1 2;
+    padding: 0 1;
+    border-left: dashed 2px #7dcfff;
+    color: #7dcfff;
+    height: auto;
+}
+
+ThoughtSection .title {
+    color: #7dcfff;
+    text-style: bold;
+}
+
+ThoughtSection .detail {
+    color: #a9b1d6;
+    padding: 0 0 0 2;
+    margin: 1 0 0 0;
+}
+
+/* ─── 工具调用 (可折叠) ─────────────────────────────── */
+
+ToolCallSection {
+    margin: 0 0 1 2;
+    padding: 0 1;
+    border-left: dashed 2px #e0af68;
+    color: #e0af68;
+    height: auto;
+}
+
+ToolCallSection .title {
+    color: #e0af68;
+    text-style: bold;
+}
+
+ToolCallSection .detail {
+    color: #a9b1d6;
+    padding: 0 0 0 2;
+    margin: 1 0 0 0;
+}
+
+ToolCallSection.success {
+    border-left: solid 2px #9ece6a;
+}
+
+ToolCallSection.error {
+    border-left: solid 2px #f7768e;
+}
+
+/* ─── 流式文本 ─────────────────────────────────────── */
+
+StreamingText {
+    color: #c0caf5;
+    margin: 0 0 1 0;
+}
+
+StreamingText .prefix {
+    color: #9ece6a;
+    text-style: bold;
+}
+
+/* ─── 输入区域 ─────────────────────────────────────── */
+
+#input-area {
+    dock: bottom;
+    height: 3;
+    background: #16161e;
+    padding: 0 1;
+    border-top: solid #3b4261;
+}
+
+#input-area Input {
+    width: 1fr;
+    background: #1a1b26;
+    color: #c0caf5;
+    border: solid #3b4261;
+    margin: 0 1 0 0;
+}
+
+#input-area Input:focus {
+    border: solid #7aa2f7;
+}
+
+#send-button {
+    width: 8;
+    background: #7aa2f7;
+    color: #1a1b26;
+    text-style: bold;
+}
+
+#send-button:hover {
+    background: #9ece6a;
+}
+
+/* ─── Toast 通知 ───────────────────────────────────── */
+
+.toast-info {
+    background: #7aa2f7;
+    color: #1a1b26;
+}
+
+.toast-success {
+    background: #9ece6a;
+    color: #1a1b26;
+}
+
+.toast-warning {
+    background: #e0af68;
+    color: #1a1b26;
+}
+
+.toast-error {
+    background: #f7768e;
+    color: #1a1b26;
+}
+
+/* ─── 分隔线 ───────────────────────────────────────── */
+
+.separator {
+    color: #3b4261;
+    height: 1;
+    margin: 0 0 1 0;
+}

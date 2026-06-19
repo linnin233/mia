@@ -30,7 +30,7 @@ from loguru import logger
 
 from mia.agents.base import BaseAgent
 from mia.bus.bus import MessageBus
-from mia.bus.message import Message, MessageType
+from mia.bus.message import Message, MessageType, make_tui_status
 from mia.memory.store import (
     KnowledgeEntry,
     MemoryStore,
@@ -295,6 +295,17 @@ class MemoryAgent(BaseAgent):
             print(f"   \033[90m└─\033[0m 无对话历史")
         print()
 
+        # 更新 TUI 状态栏 (如已连接)
+        try:
+            import asyncio
+            asyncio.ensure_future(self.bus.publish(make_tui_status(
+                key="memory",
+                value=f"临时:{len(self._working_memory)} 持久:{self.store.count} 历史:{len(self._conversation_history)}",
+                session_id=session_id,
+            )))
+        except Exception:
+            pass
+
         # ─── 构造转发消息 ─────────────────────────
         payload = dict(msg.payload)
         payload["memory_context"] = memory_context
@@ -426,6 +437,17 @@ class MemoryAgent(BaseAgent):
                 len(self._working_memory), self.MAX_WORKING_ENTRIES,
             )
             await self._consolidate_daily()
+
+        # 更新 TUI 状态栏
+        try:
+            import asyncio as _asyncio
+            _asyncio.ensure_future(self.bus.publish(make_tui_status(
+                key="memory",
+                value=f"临时:{len(self._working_memory)} 持久:{self.store.count}",
+                session_id=session_id,
+            )))
+        except Exception:
+            pass
 
         # ─── 4. 清理暂存 ───────────────────────────
         self._pending_intent = None

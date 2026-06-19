@@ -34,6 +34,7 @@ from mia.bus.message import (
     make_stream_start,
     make_stream_chunk,
     make_stream_end,
+    make_tui_thought,
 )
 from mia.providers.base import BaseProvider
 
@@ -690,12 +691,24 @@ class SchedulerAgent(BaseAgent):
     # conversation_memory 和 compact_memory() 现在由 MemoryAgent 管理
     # SchedulerAgent 通过 payload["memory_context"] 消费记忆上下文
 
-    @staticmethod
-    def _print_thought(title: str, detail: str) -> None:
-        """结构化输出思考过程"""
+    def _print_thought(self, title: str, detail: str) -> None:
+        """结构化输出思考过程 — 同时发布到 TUI (如已连接)"""
         indent = "   "
         print(f"\033[36m[Scheduler]\033[0m {title}")
         if detail:
             for line in detail.split("\n"):
                 print(f"{indent}\033[90m├─\033[0m {line}")
         print()
+
+        # 发布 TUI 思考消息 (TUI 不存在时目标 "tui" 无订阅者，消息静默丢弃)
+        import asyncio
+        try:
+            msg = make_tui_thought(
+                agent="scheduler",
+                title=title,
+                detail=detail,
+                session_id=self._session_id,
+            )
+            asyncio.ensure_future(self.bus.publish(msg))
+        except Exception:
+            pass  # TUI 不可用时静默失败

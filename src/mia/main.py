@@ -67,7 +67,42 @@ def parse_args():
         "--voice", "-v", type=str,
         help="语音文件路径 (配合 --query 使用)",
     )
+    parser.add_argument(
+        "--no-tui", action="store_true",
+        help="禁用 TUI 界面，使用纯文本模式",
+    )
     return parser.parse_args()
+
+
+def _check_tui_support() -> bool:
+    """检测终端是否支持 Textual TUI
+
+    条件:
+      1. stdout 是 tty (非管道/重定向)
+      2. 未设置 MIA_NO_TUI 环境变量
+      3. textual 包已安装
+      4. 不在 pytest 中运行
+    """
+    import os
+    if not sys.stdout.isatty():
+        return False
+    if os.environ.get("MIA_NO_TUI"):
+        return False
+    # 检测 pytest
+    if "pytest" in sys.modules:
+        return False
+    try:
+        import textual  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+async def _run_tui_mode() -> None:
+    """Textual TUI 模式 — 全屏终端界面"""
+    from mia.tui.app import MiaTuiApp
+    app = MiaTuiApp()
+    await app.run_async()
 
 
 async def run_agent_pipeline(
@@ -268,8 +303,17 @@ async def _handle_compact(memory_agent: MemoryAgent) -> None:
     print()
 
 
-async def run_cli_interactive() -> None:
-    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)"""
+async def run_cli_interactive(use_tui: bool = True) -> None:
+    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)
+
+    Args:
+        use_tui: 是否使用 Textual TUI 界面 (False 时降级为纯文本模式)
+    """
+    if use_tui and _check_tui_support():
+        await _run_tui_mode()
+        return
+
+    # ─── 纯文本降级模式 ──────────────────────────────────
     print(f"\033[1mMIA v0.1.0 — 交互模式\033[0m")
     print(f"  输入 '/quit' 退出, '/help' 查看帮助, '/compact' 压缩对话历史")
     print(f"  直接输入问题开始对话")
@@ -540,7 +584,7 @@ def main():
     elif args.query:
         asyncio.run(run_cli_query(args.query, args.image, args.voice))
     else:
-        asyncio.run(run_cli_interactive())
+        asyncio.run(run_cli_interactive(use_tui=not args.no_tui))
 
 
 if __name__ == "__main__":

@@ -35,6 +35,19 @@ class MessageType(enum.Enum):
     STREAM_END = "stream_end"
     """流式回复结束: Scheduler 通知 Sender 流式文本已完成"""
 
+    # ─── TUI 界面消息 (Scheduler/Task/Memory → TUI App) ──
+    TUI_THOUGHT = "tui_thought"
+    """思考过程: Agent 向 TUI 发送思考/推理过程 (可折叠展示)"""
+
+    TUI_TOOL = "tui_tool"
+    """工具调用: TaskAgent 向 TUI 发送工具调用和结果"""
+
+    TUI_TOAST = "tui_toast"
+    """通知提示: 向 TUI 发送 toast 通知 (info/success/warning/error)"""
+
+    TUI_STATUS = "tui_status"
+    """状态栏更新: 向 TUI 发送状态栏键值对更新"""
+
     # ─── Scheduler ⇄ TaskAgent ─────────────────────────
     EXECUTE_TASK = "execute_task"
     """任务执行指令: Scheduler 要求 TaskAgent 执行任务"""
@@ -311,5 +324,113 @@ def make_stream_end(
         source="scheduler",
         target="sender",
         payload={"message": full_message},
+        session_id=session_id,
+    )
+
+
+# ─── TUI 消息工厂函数 ─────────────────────────────────
+
+
+def make_tui_thought(
+    agent: str,
+    title: str,
+    detail: str = "",
+    session_id: Optional[str] = None,
+) -> Message:
+    """构建 TUI_THOUGHT 消息 — Agent 思考过程
+
+    Args:
+        agent: Agent 名称 (scheduler/task/memory/receiver)
+        title: 思考标题 (如 "分析用户意图")
+        detail: 思考详情 (如 reasoning 文本)
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.TUI_THOUGHT,
+        source=agent,
+        target="tui",
+        payload={
+            "agent": agent,
+            "title": title,
+            "detail": detail,
+        },
+        session_id=session_id,
+    )
+
+
+def make_tui_tool(
+    tool_name: str,
+    tool_args: str = "",
+    result: str = "",
+    status: str = "running",
+    session_id: Optional[str] = None,
+) -> Message:
+    """构建 TUI_TOOL 消息 — 工具调用和结果
+
+    Args:
+        tool_name: 工具名称 (web_search/weather/shell/file)
+        tool_args: 工具调用参数
+        result: 工具执行结果文本
+        status: 状态 (running/success/error)
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.TUI_TOOL,
+        source="task_agent",
+        target="tui",
+        payload={
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "result": result,
+            "status": status,
+        },
+        session_id=session_id,
+    )
+
+
+def make_tui_toast(
+    level: str,
+    message: str,
+    session_id: Optional[str] = None,
+) -> Message:
+    """构建 TUI_TOAST 消息 — 通知提示
+
+    Args:
+        level: 通知级别 (info/success/warning/error)
+        message: 通知文本
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.TUI_TOAST,
+        source="system",
+        target="tui",
+        payload={
+            "level": level,
+            "message": message,
+        },
+        session_id=session_id,
+    )
+
+
+def make_tui_status(
+    key: str,
+    value: str,
+    session_id: Optional[str] = None,
+) -> Message:
+    """构建 TUI_STATUS 消息 — 状态栏更新
+
+    Args:
+        key: 状态键 (memory/model/session)
+        value: 状态值
+        session_id: 会话 ID
+    """
+    return Message(
+        msg_type=MessageType.TUI_STATUS,
+        source="system",
+        target="tui",
+        payload={
+            "key": key,
+            "value": value,
+        },
         session_id=session_id,
     )
