@@ -129,10 +129,15 @@ class TaskAgent(BaseAgent):
         tools_hint = msg.payload.get("tools_hint", [])
         task_id = msg.msg_id
 
-        print(f"\033[33m[TaskAgent]\033[0m 收到任务")
-        print(f"   \033[90m├─\033[0m 任务: {task}")
-        if tools_hint:
-            print(f"   \033[90m├─\033[0m 建议工具: {', '.join(tools_hint)}")
+        from mia.config import get_config
+        verbose = get_config().agent.verbose
+        if verbose:
+            print(f"\033[33m[TaskAgent]\033[0m 收到任务")
+            print(f"   \033[90m├─\033[0m 任务: {task}")
+            if tools_hint:
+                print(f"   \033[90m├─\033[0m 建议工具: {', '.join(tools_hint)}")
+        else:
+            print(f"\033[33m[TaskAgent]\033[0m 执行: {task[:60]}")
 
         logger.info("[TaskAgent] 开始执行任务: {}", task)
 
@@ -142,7 +147,8 @@ class TaskAgent(BaseAgent):
                 tools_hint=tools_hint,
             )
 
-            print(f"   \033[90m└─\033[0m 完成, 工具调用: {len(tool_calls)}次")
+            if verbose:
+                print(f"   \033[90m└─\033[0m 完成, 工具调用: {len(tool_calls)}次")
 
             await self.send(make_task_result(
                 task_id=task_id,
@@ -227,7 +233,8 @@ class TaskAgent(BaseAgent):
                     continue
 
                 # 执行工具
-                print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)})")
+                if verbose:
+                    print(f"   \033[90m├─\033[0m 调用工具: {tool_name}({json.dumps(tool_args, ensure_ascii=False)})")
 
                 try:
                     tool = self.tools[tool_name]

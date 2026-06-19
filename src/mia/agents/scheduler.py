@@ -692,9 +692,12 @@ class SchedulerAgent(BaseAgent):
 
     def _print_thought(self, title: str, detail: str) -> None:
         """结构化输出思考过程"""
+        from mia.config import get_config
+        verbose = get_config().agent.verbose
         indent = "   "
         print(f"\033[36m[Scheduler]\033[0m {title}")
-        if detail:
+        if verbose and detail:
             for line in detail.split("\n"):
                 print(f"{indent}\033[90m├─\033[0m {line}")
-        print()
+        if verbose:
+            print()

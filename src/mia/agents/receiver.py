@@ -86,13 +86,16 @@ class ReceiverAgent(BaseAgent):
         full_intent = "\n".join(intent_parts)
 
         # 结构化展示
-        print(f"\033[35m[Receiver]\033[0m 理解用户输入")
-        print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
-        if image_path:
-            print(f"   \033[90m├─\033[0m 图片: {image_path}")
-        if voice_path:
-            print(f"   \033[90m├─\033[0m 语音: {voice_path}")
-        print(f"   \033[90m└─\033[0m 意图: {full_intent}")
+        from mia.config import get_config
+        verbose = get_config().agent.verbose
+        if verbose:
+            print(f"\033[35m[Receiver]\033[0m 理解用户输入")
+            print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
+            if image_path:
+                print(f"   \033[90m├─\033[0m 图片: {image_path}")
+            if voice_path:
+                print(f"   \033[90m├─\033[0m 语音: {voice_path}")
+            print(f"   \033[90m└─\033[0m 意图: {full_intent}")
 
         # 发送到 Scheduler
         intent_msg = make_user_intent(

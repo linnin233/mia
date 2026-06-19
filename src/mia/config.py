@@ -81,6 +81,9 @@ class AgentConfig(BaseSettings):
     # 流式输出
     enable_streaming: bool = True         # 是否启用流式输出 (MIA_ENABLE_STREAMING)
 
+    # 详细日志
+    verbose: bool = True                  # 是否输出详细 Agent 思考过程 (/verbose 切换)
+
     model_config = {"env_prefix": "MIA_"}
 
 

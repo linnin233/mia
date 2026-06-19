@@ -382,6 +382,7 @@ async def run_cli_interactive() -> None:
   /quit, /exit, /q  — 退出
   /help, /h         — 显示帮助
   /compact          — 压缩对话历史 (将多轮对话总结为摘要，节省 token)
+  /verbose          — 切换详细日志 (默认开启，关闭后只显示概要)
   /memory           — 显示当前对话记忆状态
   /image <path>     — 发送图片 (下一行输入)
   直接输入文本       — 开始对话
@@ -393,6 +394,16 @@ async def run_cli_interactive() -> None:
   You > /image screenshot.png
   You > 分析这张截图
 """)
+                continue
+
+            # /verbose — 切换详细日志
+            if user_input.lower() == "/verbose":
+                config = get_config()
+                config.agent.verbose = not config.agent.verbose
+                status = "开启" if config.agent.verbose else "关闭"
+                print(f"  \033[90m详细日志: {status}\033[0m")
+                print(f"  \033[90m(Agent 思考过程、工具调用详情等)\033[0m")
+                print()
                 continue
 
             # /compact — 压缩对话历史
@@ -421,7 +432,7 @@ async def run_cli_interactive() -> None:
             # ─── 拦截所有以 / 开头的未知命令，不进入 Agent 链 ───
             if user_input.startswith("/"):
                 # 尝试模糊匹配给出建议
-                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/memory", "/image"]
+                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/verbose", "/memory", "/image"]
                 cmd_lower = user_input.lower()
                 suggestions = [c for c in known_commands if c.startswith(cmd_lower[:3])]
                 if suggestions:

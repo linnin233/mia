@@ -59,11 +59,14 @@ class SenderAgent(BaseAgent):
         message = msg.payload.get("message", "")
 
         # 结构化展示
-        print()
-        print(f"\033[32m[Sender]\033[0m 输出回复:")
-        print(f"   \033[90m└─\033[0m {message}")
-        print()
-        print(f"\033[1m{'-'*50}\033[0m")
+        from mia.config import get_config
+        verbose = get_config().agent.verbose
+        if verbose:
+            print()
+            print(f"\033[32m[Sender]\033[0m 输出回复:")
+            print(f"   \033[90m└─\033[0m {message}")
+            print()
+            print(f"\033[1m{'-'*50}\033[0m")
 
         logger.info("[Sender] 文本回复已输出, len={}", len(message))
 
@@ -89,9 +92,12 @@ class SenderAgent(BaseAgent):
 
     async def _handle_stream_start(self, msg: Message) -> None:
         """流式输出开始 — 打印 header，准备接收增量文本"""
-        print()
-        print(f"\033[32m[Sender]\033[0m 输出回复:")
-        print(f"   \033[90m└─\033[0m ", end="", flush=True)
+        from mia.config import get_config
+        verbose = get_config().agent.verbose
+        if verbose:
+            print()
+            print(f"\033[32m[Sender]\033[0m 输出回复:")
+            print(f"   \033[90m└─\033[0m ", end="", flush=True)
 
     async def _handle_stream_chunk(self, msg: Message) -> None:
         """流式输出文本块 — 立即打印增量文本，不换行"""
@@ -103,8 +109,10 @@ class SenderAgent(BaseAgent):
         """流式输出结束 — 打印 footer，发送 CONVERSATION_DONE"""
         message = msg.payload.get("message", "")
         print()  # 流式文本结束，换行
-        print()
-        print(f"\033[1m{'-'*50}\033[0m")
+        from mia.config import get_config
+        if get_config().agent.verbose:
+            print()
+            print(f"\033[1m{'-'*50}\033[0m")
 
         logger.info("[Sender] 流式回复完成, len={}", len(message))
 
