@@ -36,9 +36,10 @@ audio = [
     "numpy>=1.26.0",
 ]
 
-# 微信渠道 (可选 — AES 媒体加解密)
+# 微信渠道 (可选 — AES 媒体加解密 + SILK 语音解码)
 wechat = [
     "pycryptodome>=3.20.0",
+    "pilk>=0.2",
 ]
 
 [tool.hatch.build.targets.wheel]

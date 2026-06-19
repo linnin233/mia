@@ -1115,11 +1115,12 @@ class WeChatAgent(BaseAgent):
     # ─── SILK → WAV 转码 ────────────────────────────
 
     async def _convert_to_wav(self, file_path: str) -> Optional[str]:
-        """将 SILK 音频转为 WAV 格式（MiMo 支持的格式）
+        """将微信 SILK 音频转为 WAV 格式（MiMo 支持的格式）
 
-        iLink 语音消息使用 SILK V3 编码（微信私有格式），
-        MiMo-V2.5 只接受 mp3/flac/m4a/wav/ogg。
-        优先使用 ffmpeg 转码。
+        iLink 语音消息使用 SILK V3 编码（微信私有格式）。
+        使用 pilk (Python SILK 解码器) 解码为 PCM，再封装 WAV 容器。
+
+        官方 openclaw-weixin 插件用 silk-wasm 做同样的事 (silk-transcode.js)。
 
         Args:
             file_path: SILK 音频文件路径
@@ -1127,66 +1128,108 @@ class WeChatAgent(BaseAgent):
         Returns:
             WAV 文件路径，失败返回 None
         """
-        import subprocess
-
         silk_path = Path(file_path)
         if not silk_path.exists():
             return None
 
-        # 检查是否是 SILK 格式（magic bytes: #!SILK 或 SILK_V3）
+        # 检查是否是 SILK 格式（magic bytes: #!SILK_V3，WeChat 前有 0x02 前缀）
         try:
-            head = silk_path.read_bytes()[:16]
+            raw = silk_path.read_bytes()
+            head = raw[:16]
             if not (b"SILK" in head or b"#!SILK" in head):
-                # 不是 SILK，可能已经是 WAV 或其他格式，直接返回
+                # 不是 SILK → 可能已是 WAV 等格式，直接返回
                 logger.debug(
-                    "[WeChatAgent] 音频非 SILK 格式，跳过转码: head=%s",
+                    "[WeChatAgent] 音频非 SILK，跳过转码: head=%s",
                     head[:8].hex(),
                 )
                 return file_path
         except Exception:
             return None
 
-        # 尝试 ffmpeg 转码
-        wav_path = silk_path.with_suffix(".wav")
+        # 剥离 WeChat 的 0x02 前缀字节（标准 SILK 以 #!SILK_V3 开头）
+        if raw[0:1] == b"\x02" and raw[1:10] == b"#!SILK_V3":
+            silk_data = raw[1:]
+            logger.debug("[WeChatAgent] 已剥离 WeChat 0x02 前缀")
+        else:
+            silk_data = raw
+
+        # 尝试 pilk 解码
+        # pilk.decode(silk_path, pcm_path) → 写入原始 PCM s16le 文件
         try:
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-i", str(silk_path),
-                    "-ar", "24000",   # 24kHz 采样率（微信 SILK 原生）
-                    "-ac", "1",       # 单声道
-                    "-f", "wav",      # WAV 容器
-                    str(wav_path),
-                ],
-                capture_output=True,
-                timeout=30,
-            )
-            if result.returncode == 0 and wav_path.exists():
-                logger.info(
-                    "[WeChatAgent] SILK→WAV 转码成功: %s → %s (%d bytes)",
-                    silk_path.name, wav_path.name,
-                    wav_path.stat().st_size,
+            import pilk
+
+            # 剥离 0x02 前缀后仍需写回临时文件（pilk 只接受文件路径）
+            temp_silk_path = silk_path.with_suffix(".silk.tmp")
+            temp_silk_path.write_bytes(silk_data)
+
+            pcm_path = silk_path.with_suffix(".pcm")
+            try:
+                duration_s = pilk.decode(
+                    str(temp_silk_path), str(pcm_path),
                 )
-                # 清理原始 SILK 文件
+            finally:
+                # 清理临时 SILK 文件
                 try:
-                    silk_path.unlink(missing_ok=True)
+                    temp_silk_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-                return str(wav_path)
-            else:
-                stderr = result.stderr.decode(errors="replace")[:200]
-                logger.warning(
-                    "[WeChatAgent] ffmpeg 转码失败: rc=%d stderr=%s",
-                    result.returncode, stderr,
-                )
-        except FileNotFoundError:
-            logger.warning(
-                "[WeChatAgent] ffmpeg 未安装，无法转码 SILK→WAV"
+
+            # 读取 PCM 数据，手动封装 WAV 容器
+            pcm = pcm_path.read_bytes()
+            pcm_path.unlink(missing_ok=True)  # 清理临时 PCM
+
+            sample_rate = 24000
+            num_channels = 1
+            bits_per_sample = 16
+            byte_rate = sample_rate * num_channels * bits_per_sample // 8
+            block_align = num_channels * bits_per_sample // 8
+            data_size = len(pcm)
+            riff_size = 36 + data_size
+
+            wav = bytearray(44 + data_size)
+            # RIFF header
+            wav[0:4] = b"RIFF"
+            wav[4:8] = riff_size.to_bytes(4, "little")
+            wav[8:12] = b"WAVE"
+            # fmt chunk
+            wav[12:16] = b"fmt "
+            wav[16:20] = (16).to_bytes(4, "little")          # fmt chunk size
+            wav[20:22] = (1).to_bytes(2, "little")           # PCM format
+            wav[22:24] = num_channels.to_bytes(2, "little")  # mono
+            wav[24:28] = sample_rate.to_bytes(4, "little")
+            wav[28:32] = byte_rate.to_bytes(4, "little")
+            wav[32:34] = block_align.to_bytes(2, "little")
+            wav[34:36] = bits_per_sample.to_bytes(2, "little")
+            # data chunk
+            wav[36:40] = b"data"
+            wav[40:44] = data_size.to_bytes(4, "little")
+            wav[44:] = pcm
+
+            wav_path = silk_path.with_suffix(".wav")
+            wav_path.write_bytes(bytes(wav))
+
+            logger.info(
+                "[WeChatAgent] SILK→WAV 转码成功: %s → %s "
+                "(%d bytes, %.1fs)",
+                silk_path.name, wav_path.name,
+                len(wav), float(duration_s or 0) / 1000,
             )
-        except subprocess.TimeoutExpired:
-            logger.warning("[WeChatAgent] ffmpeg 转码超时")
-        except Exception:
-            logger.exception("[WeChatAgent] ffmpeg 转码异常")
+            # 清理原始 SILK 文件
+            try:
+                silk_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return str(wav_path)
+
+        except ImportError:
+            logger.warning(
+                "[WeChatAgent] pilk 未安装，无法解码 SILK。"
+                "请运行: pip install pilk"
+            )
+        except Exception as e:
+            logger.warning(
+                "[WeChatAgent] pilk 解码失败: %s", e
+            )
 
         return None
 

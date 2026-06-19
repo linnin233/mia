@@ -392,6 +392,8 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
             base_url=config.wechat.base_url,
             enabled=True,
             media_dir=config.wechat.media_dir,
+            mimo=mimo,                                # TTS 语音合成
+            workspace_dir=config.agent.workspace_dir,  # TTS 音频输出
         )
 
     # 启动所有 Agent
