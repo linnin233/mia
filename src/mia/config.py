@@ -6,6 +6,7 @@
 """
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -103,6 +104,75 @@ class AgentConfig(BaseSettings):
     model_config = {"env_prefix": "MIA_"}
 
 
+@dataclass
+class RuntimeConfig:
+    """运行时可变配置 — 由斜杠命令 (/model /agent /channel) 在运行时修改
+
+    与 pydantic-settings 的静态配置不同，RuntimeConfig 是纯 dataclass，
+    支持在交互会话中动态修改，不会被环境变量覆盖。
+    """
+
+    # ─── 平台级 API Key（一个平台一个 Key）───
+    # MiMo 平台下所有模型共享同一个 API Key
+    # DeepSeek 平台下所有模型共享同一个 API Key
+    # 初始值从 env 读取，运行时可通过 /model 命令修改
+    provider_api_keys: dict[str, str] = field(default_factory=dict)
+
+    # ─── 模型开关（在 Key 已配置的前提下，精确控制可用模型）───
+    model_enabled: dict[str, bool] = field(default_factory=lambda: {
+        "mimo-v2.5-pro": True,
+        "mimo-v2.5": True,
+        "mimo-v2.5-asr": True,
+        "mimo-v2.5-tts": True,
+        "deepseek-v4-pro": True,
+        "deepseek-v4-flash": True,
+    })
+
+    # ─── Agent 模型分配 ──────────────────────────
+    # Scheduler (决策引擎) — 文本推理
+    scheduler_model: str = "mimo-v2.5-pro"
+    scheduler_fallback: str = "deepseek-v4-flash"
+
+    # TaskAgent (任务执行) — 文本推理 + function calling
+    task_model: str = "mimo-v2.5-pro"
+    task_fallback: str = "deepseek-v4-flash"
+
+    # MemoryAgent (记忆管理) — 文本推理
+    memory_model: str = "mimo-v2.5-pro"
+    memory_fallback: str = "deepseek-v4-flash"
+
+    # Receiver (输入理解) — 文本 + 视觉 + 语音
+    receiver_text_model: str = "mimo-v2.5-pro"
+    receiver_vision_model: str = "mimo-v2.5"
+    receiver_audio_model: str = "mimo-v2.5"
+    receiver_vision_enabled: bool = True
+    receiver_audio_enabled: bool = True
+
+    # Sender (输出) — TTS 语音合成
+    sender_tts_model: str = "mimo-v2.5-tts"
+    sender_tts_enabled: bool = True
+
+    # WeChat Sender (微信输出) — 同 Sender
+    wechat_sender_tts_enabled: bool = True
+
+    # ─── 渠道开关 ────────────────────────────────
+    wechat_enabled: bool = False
+
+    def get_api_key(self, provider: str) -> str:
+        """获取指定平台的 API Key，未配置返回空字符串"""
+        return self.provider_api_keys.get(provider, "")
+
+    def is_model_available(self, model_id: str) -> bool:
+        """检查模型是否可用（Key + 开关）"""
+        from mia.model_registry import MODEL_REGISTRY
+        info = MODEL_REGISTRY.get(model_id)
+        if not info:
+            return False
+        has_key = bool(self.provider_api_keys.get(info.provider, ""))
+        enabled = self.model_enabled.get(model_id, False)
+        return has_key and enabled
+
+
 class Config:
     """全局配置聚合"""
 
@@ -111,6 +181,14 @@ class Config:
         self.deepseek = DeepSeekConfig()
         self.agent = AgentConfig()
         self.wechat = WeChatConfig()
+
+        # 运行时可变配置 — 从 env 初始化 API Key
+        self.runtime = RuntimeConfig(
+            provider_api_keys={
+                "mimo": self.mimo.api_key,
+                "deepseek": self.deepseek.api_key,
+            },
+        )
 
         # 确保工作目录存在
         Path(self.agent.workspace_dir).mkdir(parents=True, exist_ok=True)

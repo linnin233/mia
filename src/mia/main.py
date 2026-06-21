@@ -32,8 +32,7 @@ if str(_project_root) not in sys.path:
 from mia.config import get_config
 from mia.bus.bus import MessageBus
 from mia.bus.message import Message, MessageType
-from mia.providers.mimo import MiMoProvider
-from mia.providers.deepseek import DeepSeekProvider
+from mia.model_registry import create_provider
 from mia.agents.receiver import ReceiverAgent
 from mia.agents.scheduler import SchedulerAgent
 from mia.agents.sender import SenderAgent
@@ -42,6 +41,12 @@ from mia.agents.memory import MemoryAgent
 from mia.memory.store import MemoryStore
 from mia.channels.wechat.receiver import WeChatReceiverAgent
 from mia.channels.wechat.sender import WeChatSenderAgent
+from mia.cli.commands import (
+    handle_model_command,
+    handle_agent_command,
+    handle_channel_command,
+    CommandAction,
+)
 
 
 def parse_args():
@@ -96,10 +101,10 @@ async def run_agent_pipeline(
     Returns:
         最终回复文本，超时返回 None
     """
-    config = get_config()
-    session_id = uuid.uuid4().hex[:12]
-
     # ─── 1. 创建 MessageBus ───────────────────────────
+    config = get_config()
+    rt = config.runtime
+    session_id = uuid.uuid4().hex[:12]
     bus = MessageBus(max_queue_size=100)
     await bus.start()
 
@@ -116,40 +121,47 @@ async def run_agent_pipeline(
     for mt in _mirror_types:
         bus.subscribe_mirror(mt, "memory_agent")
 
-    # ─── 2. 初始化 Provider ───────────────────────────
-    mimo = MiMoProvider(api_key=config.mimo.api_key)
-    deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
+    # ─── 2. 初始化 Provider（从 RuntimeConfig 读取平台 Key）───
+    mimo_key = rt.provider_api_keys.get("mimo", config.mimo.api_key)
+    deepseek_key = rt.provider_api_keys.get("deepseek", config.deepseek.api_key)
 
-    # ─── 3. 创建所有 Agent ────────────────────────────
+    mimo = None
+    deepseek = None
+    if mimo_key:
+        mimo = create_provider("mimo", mimo_key)
+    if deepseek_key:
+        deepseek = create_provider("deepseek", deepseek_key)
+
+    # ─── 3. 创建所有 Agent（从 RuntimeConfig 读取模型分配）────
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
-        provider=mimo,            # 主: MiMo (已修复网关和参数问题)
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,  # 备选: DeepSeek
-        fallback_model=config.deepseek.chat_model,
+        provider=mimo,
+        model=rt.scheduler_model,
+        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming,
     )
     sender = SenderAgent(
         bus=bus,
-        mimo=mimo,              # Sender 用 MiMo TTS (可选)
+        mimo=mimo if rt.sender_tts_enabled else None,
         output_dir=config.agent.workspace_dir,
     )
     task_agent = TaskAgent(
         bus=bus,
-        provider=mimo,            # TaskAgent 也用 MiMo
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,  # 备选: DeepSeek
-        fallback_model=config.deepseek.chat_model,
+        provider=mimo,
+        model=rt.task_model,
+        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_model=rt.task_fallback if rt.task_fallback else None,
     )
 
     # MemoryAgent — 记忆检索与存储
     memory_agent = MemoryAgent(
         bus=bus,
         provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
+        model=rt.memory_model,
+        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_model=rt.memory_fallback if rt.memory_fallback else None,
     )
 
     # WeChat 通信渠道 (可选) — 收发分离
@@ -168,7 +180,7 @@ async def run_agent_pipeline(
             bot_token_file=config.wechat.bot_token_file,
             base_url=config.wechat.base_url,
             enabled=True,
-            mimo=mimo,
+            mimo=mimo if rt.wechat_sender_tts_enabled else None,
             workspace_dir=config.agent.workspace_dir,
         )
 
@@ -176,8 +188,9 @@ async def run_agent_pipeline(
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent\033[0m")
     print(f"  Session: {session_id}")
-    print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
-    print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
+    print(f"  Scheduler: {rt.scheduler_model} (主) / {rt.scheduler_fallback or '无'} (备)")
+    print(f"  Receiver: 视觉={'on' if rt.receiver_vision_enabled else 'off'} 语音={'on' if rt.receiver_audio_enabled else 'off'}")
+    print(f"  Sender: TTS={'on' if rt.sender_tts_enabled else 'off'}")
     if enable_wechat:
         print(f"  WeChat: 已启用 (iLink Bot)")
     print(f"\033[1m{'='*50}\033[0m")
@@ -259,10 +272,7 @@ async def run_agent_pipeline(
     finally:
         # ─── 7. 清理 ──────────────────────────────────
         # 停止所有 Agent
-        cleanup_agents = [receiver, memory_agent, scheduler, sender, task_agent]
-        if enable_wechat:
-            cleanup_agents.extend([wechat_receiver, wechat_sender])
-        for agent in cleanup_agents:
+        for agent in agents:
             await agent.stop()
 
         # 取消后台任务
@@ -296,6 +306,115 @@ async def run_cli_query(
     else:
         print(f"\033[31m[失败] 未收到回复\033[0m")
         sys.exit(1)
+
+
+def _find_agent(agent_list: list, agent_type):
+    """从 Agent 列表中查找指定类型的实例"""
+    for agent in agent_list:
+        if isinstance(agent, agent_type):
+            return agent
+    return None
+
+
+async def _reconfigure_agents(
+    agent_list: list,
+    tasks: list,
+    bus: MessageBus,
+    config,
+    enable_wechat: bool,
+) -> tuple[list, list]:
+    """根据当前 RuntimeConfig 重建所有 Agent"""
+    rt = config.runtime
+
+    # 1. 停止旧 Agent
+    for agent in agent_list:
+        await agent.stop()
+    # 2. 取消旧任务
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    tasks.clear()
+    agent_list.clear()
+
+    # 3. 重新创建 Provider
+    mimo_key = rt.provider_api_keys.get("mimo", config.mimo.api_key)
+    deepseek_key = rt.provider_api_keys.get("deepseek", config.deepseek.api_key)
+
+    mimo = None
+    deepseek = None
+    if mimo_key:
+        mimo = create_provider("mimo", mimo_key)
+    if deepseek_key:
+        deepseek = create_provider("deepseek", deepseek_key)
+
+    # 4. 重建核心 Agent
+    receiver = ReceiverAgent(bus=bus, mimo=mimo)
+    scheduler = SchedulerAgent(
+        bus=bus,
+        provider=mimo,
+        model=rt.scheduler_model,
+        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
+        enable_streaming=config.agent.enable_streaming,
+    )
+    sender = SenderAgent(
+        bus=bus,
+        mimo=mimo if rt.sender_tts_enabled else None,
+        output_dir=config.agent.workspace_dir,
+    )
+    task_agent = TaskAgent(
+        bus=bus,
+        provider=mimo,
+        model=rt.task_model,
+        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_model=rt.task_fallback if rt.task_fallback else None,
+    )
+    memory_agent = MemoryAgent(
+        bus=bus,
+        provider=mimo,
+        model=rt.memory_model,
+        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_model=rt.memory_fallback if rt.memory_fallback else None,
+    )
+
+    agent_list.extend([receiver, memory_agent, scheduler, sender, task_agent])
+
+    # 5. 微信渠道
+    wechat_receiver = None
+    wechat_sender = None
+    if enable_wechat:
+        wechat_receiver = WeChatReceiverAgent(
+            bus=bus,
+            bot_token=config.wechat.bot_token,
+            bot_token_file=config.wechat.bot_token_file,
+            base_url=config.wechat.base_url,
+            enabled=True,
+            media_dir=config.wechat.media_dir,
+        )
+        wechat_sender = WeChatSenderAgent(
+            bus=bus,
+            bot_token=config.wechat.bot_token,
+            bot_token_file=config.wechat.bot_token_file,
+            base_url=config.wechat.base_url,
+            enabled=True,
+            mimo=mimo if rt.wechat_sender_tts_enabled else None,
+            workspace_dir=config.agent.workspace_dir,
+        )
+        agent_list.extend([wechat_receiver, wechat_sender])
+
+    # 6. 启动新 Agent
+    for agent in agent_list:
+        await agent.start()
+    await asyncio.sleep(0.3)
+    for agent in agent_list:
+        tasks.append(asyncio.create_task(agent.run()))
+
+    print(f"  \033[32m[OK]\033[0m Agent 已重建 "
+          f"(Scheduler: {rt.scheduler_model}, "
+          f"Receiver语音={'on' if rt.receiver_audio_enabled else 'off'}, "
+          f"SenderTTS={'on' if rt.sender_tts_enabled else 'off'})")
+
+    return agent_list, tasks
 
 
 async def _handle_compact(memory_agent: MemoryAgent) -> None:
@@ -356,12 +475,11 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
     )
 
     config = get_config()
+    rt = config.runtime
     bus = MessageBus(max_queue_size=100)
     await bus.start()
 
     # ─── 总线记忆镜像 ──────────────────────────────
-    # MemoryAgent 通过镜像订阅自动感知全总线消息，
-    # 不再依赖 SenderAgent/WeChatSenderAgent 显式发 CONVERSATION_DONE
     _mirror_types = [
         MessageType.USER_INTENT,
         MessageType.SEND_TEXT,
@@ -374,36 +492,44 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
     for mt in _mirror_types:
         bus.subscribe_mirror(mt, "memory_agent")
 
-    mimo = MiMoProvider(api_key=config.mimo.api_key)
-    deepseek = DeepSeekProvider(api_key=config.deepseek.api_key)
+    # ─── 初始化 Provider（从 RuntimeConfig 读取平台 Key）───
+    mimo_key = rt.provider_api_keys.get("mimo", config.mimo.api_key)
+    deepseek_key = rt.provider_api_keys.get("deepseek", config.deepseek.api_key)
+
+    mimo = None
+    deepseek = None
+    if mimo_key:
+        mimo = create_provider("mimo", mimo_key)
+    if deepseek_key:
+        deepseek = create_provider("deepseek", deepseek_key)
 
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
         provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
+        model=rt.scheduler_model,
+        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming,
     )
     sender = SenderAgent(
         bus=bus,
-        mimo=mimo,
+        mimo=mimo if rt.sender_tts_enabled else None,
         output_dir=config.agent.workspace_dir,
     )
     task_agent = TaskAgent(
         bus=bus,
         provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
+        model=rt.task_model,
+        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_model=rt.task_fallback if rt.task_fallback else None,
     )
     memory_agent = MemoryAgent(
         bus=bus,
         provider=mimo,
-        model=config.mimo.chat_model,
-        fallback_provider=deepseek,
-        fallback_model=config.deepseek.chat_model,
+        model=rt.memory_model,
+        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_model=rt.memory_fallback if rt.memory_fallback else None,
     )
 
     # WeChat 通信渠道 (可选) — 收发分离
@@ -424,15 +550,16 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
             bot_token_file=config.wechat.bot_token_file,
             base_url=config.wechat.base_url,
             enabled=True,
-            mimo=mimo,
+            mimo=mimo if rt.wechat_sender_tts_enabled else None,
             workspace_dir=config.agent.workspace_dir,
         )
 
     # 启动所有 Agent
     print(f"\033[1m{'='*50}\033[0m")
     print(f"\033[1mMIA v0.1.0 — MiMo Intelligent Agent (持久模式)\033[0m")
-    print(f"  Scheduler: {config.mimo.chat_model} @ {config.mimo.get_base_url()}")
-    print(f"  Fallback: deepseek-chat @ {config.deepseek.base_url}")
+    print(f"  Scheduler: {rt.scheduler_model} (主) / {rt.scheduler_fallback or '无'} (备)")
+    print(f"  Receiver: 视觉={'on' if rt.receiver_vision_enabled else 'off'} 语音={'on' if rt.receiver_audio_enabled else 'off'}")
+    print(f"  Sender: TTS={'on' if rt.sender_tts_enabled else 'off'}")
     print(f"  记忆: MemoryAgent @ {memory_agent.store.file_path}/ (index+daily)")
     if enable_wechat:
         print(f"  微信: 已启用 (iLink Bot 长轮询) {'(有 token)' if config.wechat.bot_token else '(需 QR 码登录)'}")
@@ -488,6 +615,9 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
 命令:
   /quit, /exit, /q  — 退出
   /help, /h         — 显示帮助
+  /model            — 模型平台配置 (API Key + 模型开关)
+  /agent            — Agent 模型分配 (每个Agent独立选模型)
+  /channel          — 通信渠道配置 (微信等)
   /compact          — 压缩对话历史 (将多轮对话总结为摘要，节省 token)
   /verbose          — 切换详细日志 (默认开启，关闭后只显示概要)
   /memory           — 显示当前对话记忆状态
@@ -498,14 +628,10 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
 
 示例:
   You > 帮我搜索最新的 Python 新闻
-  You > 嘉兴的天气怎么样
+  You > /model          (配置 API Key 和模型)
+  You > /agent          (给每个 Agent 分配模型)
+  You > /channel        (开关微信渠道)
   You > /compact
-  You > /image screenshot.png
-  You > 分析这张截图
-  You > /voice meeting.mp3
-  You > 总结这段会议录音
-  You > /record
-  [录音中...] 按 Enter 停止 → 自动理解并回复
 """)
                 continue
 
@@ -521,15 +647,23 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
 
             # /compact — 压缩对话历史
             if user_input.lower() == "/compact":
-                await _handle_compact(memory_agent)
+                mem = _find_agent(agent_list, MemoryAgent) or memory_agent
+                if mem:
+                    await _handle_compact(mem)
+                else:
+                    print("  \033[33mMemoryAgent 未就绪\033[0m")
                 continue
 
             # /memory — 交互式记忆浏览器 (临时 + 持久, 3级钻取)
             if user_input.lower() == "/memory":
+                mem = _find_agent(agent_list, MemoryAgent) or memory_agent
+                if not mem:
+                    print("  \033[33mMemoryAgent 未就绪\033[0m")
+                    continue
                 from mia.memory.browser import MemoryBrowser
                 browser = MemoryBrowser(
-                    memory_agent.store,
-                    working_entries=memory_agent._working_memory,
+                    mem.store,
+                    working_entries=mem._working_memory,
                 )
                 await browser.browse()
                 continue
@@ -591,10 +725,45 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
                     print()
                     continue
 
+            # /model — 模型平台配置 (API Key + 模型开关)
+            if user_input.lower() == "/model":
+                action = await handle_model_command(rt)
+                if action == CommandAction.RECONFIGURE_AGENTS:
+                    agent_list, tasks = await _reconfigure_agents(
+                        agent_list, tasks, bus, config,
+                        enable_wechat=rt.wechat_enabled,
+                    )
+                    memory_agent = _find_agent(agent_list, MemoryAgent)
+                continue
+
+            # /agent — Agent 模型分配
+            if user_input.lower() == "/agent":
+                action = await handle_agent_command(rt)
+                if action == CommandAction.RECONFIGURE_AGENTS:
+                    agent_list, tasks = await _reconfigure_agents(
+                        agent_list, tasks, bus, config,
+                        enable_wechat=rt.wechat_enabled,
+                    )
+                    memory_agent = _find_agent(agent_list, MemoryAgent)
+                continue
+
+            # /channel — 通信渠道配置 (微信等)
+            if user_input.lower() == "/channel":
+                action = await handle_channel_command(rt)
+                if action == CommandAction.RECONFIGURE_WECHAT:
+                    agent_list, tasks = await _reconfigure_agents(
+                        agent_list, tasks, bus, config,
+                        enable_wechat=rt.wechat_enabled,
+                    )
+                    memory_agent = _find_agent(agent_list, MemoryAgent)
+                continue
+
             # ─── 拦截所有以 / 开头的未知命令，不进入 Agent 链 ───
             if user_input.startswith("/"):
                 # 尝试模糊匹配给出建议
-                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact", "/verbose", "/memory", "/image", "/voice", "/record"]
+                known_commands = ["/quit", "/exit", "/q", "/help", "/h", "/compact",
+                                  "/verbose", "/memory", "/image", "/voice", "/record",
+                                  "/model", "/agent", "/channel"]
                 cmd_lower = user_input.lower()
                 suggestions = [c for c in known_commands if c.startswith(cmd_lower[:3])]
                 if suggestions:
@@ -659,10 +828,7 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
     finally:
         # ─── 清理 — 退出时执行一次 ─────────────────
         print("\n\033[90m正在关闭 Agent 系统...\033[0m")
-        cleanup_agents = [receiver, memory_agent, scheduler, sender, task_agent]
-        if enable_wechat:
-            cleanup_agents.extend([wechat_receiver, wechat_sender])
-        for agent in cleanup_agents:
+        for agent in agent_list:
             await agent.stop()
         for t in tasks:
             t.cancel()
