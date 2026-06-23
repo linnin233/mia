@@ -63,6 +63,9 @@ function main() {
     process.stdin.setRawMode(true);
   }
 
+  // 进入交替屏幕缓冲区（关键：旧内容不堆积，像 OpenCode 一样"原地刷新"）
+  process.stdout.write('\x1b[?1049h');
+
   // 隐藏光标
   process.stdout.write('\x1b[?25l');
 
@@ -82,8 +85,8 @@ function main() {
 }
 
 function cleanup() {
-  // 显示光标 + 清屏
-  process.stdout.write('\x1b[?25h\x1b[2J\x1b[H');
+  // 退出交替屏幕 + 显示光标
+  process.stdout.write('\x1b[?1049l\x1b[?25h');
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false);
   }
