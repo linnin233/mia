@@ -25,12 +25,12 @@ function draw() {
   const h = rows;
   const innerW = w - 2;
 
-  // 光标归位 → 清屏（含滚动缓冲区）
-  let out = '\x1b[H\x1b[2J\x1b[3J';
+  // 归位 + 清屏（不用 \x1b[3J，Windows Terminal 兼容性更好）
+  let out = '\x1b[1;1H\x1b[2J';
 
-  // 顶边框（写两次兜底，防止终端吞首行）
+  // 顶边框
   const topLine = B.tl + B.h.repeat(innerW) + B.tr + '\n';
-  out += topLine + topLine;
+  out += topLine;
 
   // ─── Header 区 ──────────────────────────────
   const title = ' MIA TUI | ' + w + 'x' + h + ' ';
