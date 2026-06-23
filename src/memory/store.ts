@@ -216,8 +216,13 @@ export class MemoryStore {
       }
     }
     try {
+      // 确保父目录存在（测试场景直接设置 _filePath 时可能不存在）
+      const dir = path.dirname(this._filePath!);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       const data = this._entries.map((e) => e.toJSON());
-      fs.writeFileSync(this.filePath!, JSON.stringify(data, null, 2), 'utf-8');
+      fs.writeFileSync(this._filePath!, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       console.warn(
         `\x1b[33m[MemoryStore]\x1b[0m 保存失败: ${err}`,

@@ -407,12 +407,14 @@ export class MemoryAgent extends BaseAgent {
     assistantReply: string,
     sessionId: string,
   ): KnowledgeEntry | null {
-    // 组合用户消息和助手回复，提取有意义的内容
-    const combined = `${userMsg} → ${assistantReply}`.trim();
-    if (combined.length < 5) return null;
+    // 太短的对话不产生知识（避免 "你好" → "你好" 这种）
+    const meaningfulLength = userMsg.trim().length + assistantReply.trim().length;
+    if (meaningfulLength < 8) return null;
 
-    // 优先提取事实性知识：名字、偏好、决策等
-    const nameMatch = combined.match(
+    // ─── 优先从用户消息提取结构化知识 ──────────
+
+    // 1. 名字提取: "我叫/我是/叫我/称呼 XX"
+    const nameMatch = userMsg.match(
       /(?:我叫|我是|名字是|称呼|叫我)\s*['"「]?([^'"「」,.，。\s]{1,20})/,
     );
     if (nameMatch) {
@@ -427,8 +429,8 @@ export class MemoryAgent extends BaseAgent {
       });
     }
 
-    // 提取偏好
-    const prefMatch = combined.match(
+    // 2. 偏好提取: "喜欢/偏好/常用/想要 XX"
+    const prefMatch = userMsg.match(
       /(?:喜欢|偏好|常用|想要|想用|想了解)\s*(.+?)(?:[。！，,\.!]|$)/,
     );
     if (prefMatch) {
@@ -444,6 +446,8 @@ export class MemoryAgent extends BaseAgent {
         });
       }
     }
+
+    // ─── 通用降级: 用助手回复作摘要 ─────────────
 
     // 简单分词提取关键词
     const tokens: string[] = [];
@@ -467,7 +471,7 @@ export class MemoryAgent extends BaseAgent {
     ]);
     const keywords = tokens.filter((t) => !stopwords.has(t)).slice(0, 5);
 
-    // 用助手回复的前 100 字作为摘要（比直接复制用户输入更有用）
+    // 用助手回复的前 150 字作为摘要（比直接复制用户输入更有用）
     const summary =
       assistantReply.length > 3
         ? assistantReply.slice(0, 150) + (assistantReply.length > 150 ? '...' : '')
