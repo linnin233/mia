@@ -78,6 +78,20 @@ class WeChatConfig(BaseSettings):
     model_config = {"env_prefix": "MIA_WECHAT_"}
 
 
+class TelegramConfig(BaseSettings):
+    """Telegram Bot 渠道配置
+
+    使用标准 Telegram Bot API，只需要 Bot Token 即可认证。
+    不需要 QR 码登录，比微信 iLink 简单得多。
+    """
+
+    enabled: bool = False                 # 是否启用 Telegram 渠道
+    bot_token: str = ""                   # Bot Token (从 @BotFather 获取)
+    bot_token_file: str = ""              # Token 持久化文件路径 (默认 ~/.mia/telegram_bot_token)
+
+    model_config = {"env_prefix": "MIA_TELEGRAM_"}
+
+
 class AgentConfig(BaseSettings):
     """Agent 行为配置"""
 
@@ -155,8 +169,12 @@ class RuntimeConfig:
     # WeChat Sender (微信输出) — 同 Sender
     wechat_sender_tts_enabled: bool = True
 
+    # Telegram Sender (Telegram 输出) — 同 Sender
+    telegram_sender_tts_enabled: bool = True
+
     # ─── 渠道开关 ────────────────────────────────
     wechat_enabled: bool = False
+    telegram_enabled: bool = False
 
     def get_api_key(self, provider: str) -> str:
         """获取指定平台的 API Key，未配置返回空字符串"""
@@ -181,6 +199,7 @@ class Config:
         self.deepseek = DeepSeekConfig()
         self.agent = AgentConfig()
         self.wechat = WeChatConfig()
+        self.telegram = TelegramConfig()
 
         # 运行时可变配置 — 从 env 初始化 API Key
         self.runtime = RuntimeConfig(

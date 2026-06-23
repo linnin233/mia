@@ -697,6 +697,8 @@ class SchedulerAgent(BaseAgent):
             # 已知渠道白名单 — 防止伪造
             if channel == "wechat":
                 return "wechat_sender"  # 微信收发分离: receiver 收, sender 发
+            if channel == "telegram":
+                return "telegram_sender"  # Telegram 收发分离
         # 默认: 无前缀 uuid = CLI/API → SenderAgent
         return "sender"
 

@@ -67,6 +67,10 @@ Session routing: Scheduler reads session_id — "wechat:*" → WeChatSender, els
 
 7. **WeChatSenderAgent** (`channels/wechat/sender.py`) — receives Scheduler's reply routed to WeChat target → optional TTS synthesis → CDN upload (AES-128-ECB) → send as `file_item` to WeChat user via iLink API.
 
+8. **TelegramReceiverAgent** (`channels/telegram/receiver.py`) — Bot API `getUpdates` long polling → message dedup → publish `RAW_INPUT` with `session_id="telegram:<chat_id>"`.
+
+9. **TelegramSenderAgent** (`channels/telegram/sender.py`) — receives Scheduler's reply routed to Telegram target → optional TTS synthesis → `sendAudio`/`sendMessage` via Bot API.
+
 ### Prompt Externalization (`prompts/` + `AGENTS.md`)
 
 System prompts are loaded from external files at runtime (not hardcoded), enabling customization without code changes:

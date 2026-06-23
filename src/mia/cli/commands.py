@@ -284,6 +284,13 @@ def _build_agent_list(runtime: RuntimeConfig) -> list:
              f"TTS: {'✓' if runtime.wechat_sender_tts_enabled else '✗'} "
              f"· {runtime.sender_tts_model}"),
         )
+    # Telegram 渠道已启用时显示 Telegram Agent
+    if runtime.telegram_enabled:
+        agents.append(
+            ("telegram_sender", "Telegram Sender (TG输出)",
+             f"TTS: {'✓' if runtime.telegram_sender_tts_enabled else '✗'} "
+             f"· {runtime.sender_tts_model}"),
+        )
 
     choices = []
     for agent_id, name, detail in agents:
@@ -308,6 +315,8 @@ async def _handle_agent_detail(
         return await _config_sender_agent(runtime, "sender")
     elif agent_id == "wechat_sender":
         return await _config_sender_agent(runtime, "wechat_sender")
+    elif agent_id == "telegram_sender":
+        return await _config_sender_agent(runtime, "telegram_sender")
 
     return CommandAction.NONE
 
@@ -625,6 +634,9 @@ async def _config_sender_agent(
     if sender_type == "wechat_sender":
         agent_name = "WeChat Sender (微信输出)"
         tts_enabled_attr = "wechat_sender_tts_enabled"
+    elif sender_type == "telegram_sender":
+        agent_name = "Telegram Sender (TG输出)"
+        tts_enabled_attr = "telegram_sender_tts_enabled"
     else:
         agent_name = "Sender (终端输出)"
         tts_enabled_attr = "sender_tts_enabled"
@@ -741,6 +753,10 @@ async def handle_interface_command(runtime: RuntimeConfig) -> CommandAction:
             iface_action = await _handle_wechat_interface(runtime, config)
             if iface_action == CommandAction.RECONFIGURE_WECHAT:
                 action = CommandAction.RECONFIGURE_WECHAT
+        elif choice == "telegram":
+            iface_action = await _handle_telegram_interface(runtime, config)
+            if iface_action == CommandAction.RECONFIGURE_WECHAT:
+                action = CommandAction.RECONFIGURE_WECHAT
 
     return action
 
@@ -772,11 +788,24 @@ def _get_available_interfaces(runtime: RuntimeConfig, config) -> list[dict]:
         else:
             status = "✗ 未启用 · 未绑定"
 
-    wechat_label = f"微信 (iLink Bot)  {status}"
+    wechat_label = f"微信 (iLink Bot)    {status}"
+
+    # ─── Telegram 接口 ──────────────────────────────
+    tg_token_file = Path.home() / ".mia" / "telegram_bot_token"
+    has_tg_token = tg_token_file.exists() or bool(config.telegram.bot_token)
+    tg_enabled = runtime.telegram_enabled
+
+    if tg_enabled:
+        tg_status = "✓ 已启用 · 已绑定" if has_tg_token else "✓ 已启用 · 未配置 Token"
+    else:
+        tg_status = "✗ 未启用 · 已绑定" if has_tg_token else "✗ 未启用 · 未配置"
+
+    tg_label = f"Telegram (Bot API)   {tg_status}"
 
     interfaces = [
         {"id": "wechat", "label": wechat_label},
-        # 未来扩展点: Telegram, Discord, Slack...
+        {"id": "telegram", "label": tg_label},
+        # 未来扩展点: Discord, Slack...
     ]
 
     return interfaces
@@ -1086,50 +1115,170 @@ def _save_wechat_token(token_file, token: str) -> None:
         print(f"  \033[33m  Token 仅在当前会话有效，重启后需要重新登录\033[0m")
 
 
+async def _handle_telegram_interface(
+    runtime: RuntimeConfig, config,
+) -> CommandAction:
+    """Telegram 接口详情管理 — 查看状态 / 编辑 Token
+
+    Telegram 比微信简单：不需要 QR 码登录，只需 Bot Token 即可。
+    """
+    from pathlib import Path
+
+    token_file = Path.home() / ".mia" / "telegram_bot_token"
+
+    while True:
+        print()
+        print(f"  {'─'*50}")
+        print(f"  Telegram 接口 (Bot API)")
+        print(f"  {'─'*50}")
+
+        channel_status = "✓ 已启用" if runtime.telegram_enabled else "✗ 未启用"
+        print(f"  渠道状态:    {channel_status}")
+        print()
+
+        # Token 信息
+        if token_file.exists():
+            try:
+                from datetime import datetime
+                stat = token_file.stat()
+                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                token_raw = token_file.read_text(encoding="utf-8").strip()
+                print(f"  文件路径:    {token_file}")
+                print(f"  最后修改:    {mtime}")
+                print(f"  Token:       {_mask_key(token_raw)}")
+            except Exception:
+                print(f"  文件路径:    {token_file}")
+                print(f"  \033[33m  ⚠ 无法读取 token 文件\033[0m")
+        else:
+            if config.telegram.bot_token:
+                print(f"  Token:       {_mask_key(config.telegram.bot_token)} (来自环境变量)")
+            else:
+                print(f"  状态:        \033[90m未配置 Token\033[0m")
+                print(f"  预期路径:    {token_file}")
+        print()
+
+        # 菜单
+        menu = []
+        menu.append(questionary.Choice(
+            title=f"[编辑] 更新 Bot Token (当前: {_mask_key(config.telegram.bot_token or '未配置')})",
+            value="__edit_token__",
+        ))
+        if token_file.exists():
+            menu.append(questionary.Choice(
+                title="[删除] 删除已保存的 Token",
+                value="__delete_token__",
+            ))
+        menu.append(questionary.Choice(title="← 返回上级", value="__back__"))
+
+        choice = await questionary.select(
+            "选择操作:",
+            choices=menu,
+        ).ask_async()
+
+        if choice is None or choice == "__back__":
+            return CommandAction.NONE
+
+        if choice == "__edit_token__":
+            new_token = await questionary.password(
+                "输入 Telegram Bot Token (留空保持不变):",
+            ).ask_async()
+            if new_token is not None and new_token.strip():
+                config.telegram.bot_token = new_token.strip()
+                # 持久化到文件
+                try:
+                    token_file.parent.mkdir(parents=True, exist_ok=True)
+                    token_file.write_text(new_token.strip(), encoding="utf-8")
+                    print(f"  ✓ Token 已保存至: {token_file}")
+                except OSError:
+                    print(f"  \033[33m⚠ 无法保存 token 到文件\033[0m")
+                print(f"  ✓ Bot Token 已更新")
+                if runtime.telegram_enabled:
+                    return CommandAction.RECONFIGURE_WECHAT
+            continue
+
+        if choice == "__delete_token__":
+            confirm = await questionary.confirm(
+                "确认删除已保存的 Telegram Bot Token？",
+                default=False,
+            ).ask_async()
+            if confirm:
+                if token_file.exists():
+                    try:
+                        token_file.unlink()
+                        print(f"  ✓ Token 文件已删除")
+                    except OSError:
+                        print(f"  \033[33m⚠ 无法删除文件\033[0m")
+                config.telegram.bot_token = ""
+                if runtime.telegram_enabled:
+                    return CommandAction.RECONFIGURE_WECHAT
+            continue
+
+    return CommandAction.NONE
+
+
 # ═══════════════════════════════════════════════════════════════
 # /channel — 通信渠道配置
 # ═══════════════════════════════════════════════════════════════
 
 async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
-    """/channel 命令 — 配置通信渠道（微信等）
+    """/channel 命令 — 配置通信渠道（微信、Telegram 等）
 
-    开启微信渠道时会创建 WeChatReceiverAgent + WeChatSenderAgent
-    关闭时会销毁它们。
+    开关渠道时会触发 Agent 重建（RECONFIGURE_WECHAT）。
     """
     from mia.config import get_config
 
     while True:
         print()
-        print(f"  {'─'*50}")
+        print(f"  {'─'*55}")
         print(f"  通信渠道配置")
-        print(f"  {'─'*50}")
+        print(f"  {'─'*55}")
 
         wechat_label = "✓ 已启用" if runtime.wechat_enabled else "✗ 未启用"
-        print(f"  微信 (iLink Bot): {wechat_label}")
+        telegram_label = "✓ 已启用" if runtime.telegram_enabled else "✗ 未启用"
+        print(f"  微信 (iLink Bot):     {wechat_label}")
+        print(f"  Telegram (Bot API):   {telegram_label}")
         print()
 
         menu = []
         if runtime.wechat_enabled:
             menu.append(questionary.Choice(
                 title="[关闭] 关闭微信渠道",
-                value="__toggle_off__",
+                value="__toggle_wechat_off__",
             ))
         else:
             menu.append(questionary.Choice(
                 title="[开启] 开启微信渠道 (iLink Bot 长轮询 + QR 码登录)",
-                value="__toggle_on__",
+                value="__toggle_wechat_on__",
             ))
 
-        # 编辑 Token（仅在当前已启用或曾配置过时显示）
-        config = get_config()
-        has_token = bool(config.wechat.bot_token)
-        if has_token:
+        # Telegram 开关
+        if runtime.telegram_enabled:
             menu.append(questionary.Choice(
-                title=f"[Token] 编辑 Bot Token (当前: {_mask_key(config.wechat.bot_token)})",
-                value="__edit_token__",
+                title="[关闭] 关闭 Telegram 渠道",
+                value="__toggle_telegram_off__",
+            ))
+        else:
+            menu.append(questionary.Choice(
+                title="[开启] 开启 Telegram 渠道 (Bot API 长轮询)",
+                value="__toggle_telegram_on__",
             ))
 
-        menu.append(questionary.Separator("  (未来: Telegram, Discord, Slack...)"))
+        # 编辑 Token
+        config = get_config()
+        has_wechat_token = bool(config.wechat.bot_token)
+        if has_wechat_token:
+            menu.append(questionary.Choice(
+                title=f"[Token] 编辑微信 Token ({_mask_key(config.wechat.bot_token)})",
+                value="__edit_wechat_token__",
+            ))
+        has_tg_token = bool(config.telegram.bot_token)
+        if has_tg_token:
+            menu.append(questionary.Choice(
+                title=f"[Token] 编辑 Telegram Token ({_mask_key(config.telegram.bot_token)})",
+                value="__edit_telegram_token__",
+            ))
+
+        menu.append(questionary.Separator("  (未来: Discord, Slack...)"))
 
         menu.append(questionary.Choice(title="← 返回", value="__back__"))
 
@@ -1141,14 +1290,13 @@ async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
         if choice is None or choice == "__back__":
             return CommandAction.NONE
 
-        if choice == "__toggle_on__":
+        if choice == "__toggle_wechat_on__":
             runtime.wechat_enabled = True
             print(f"  ✓ 微信渠道已开启")
             print(f"  ℹ 如果未配置 Bot Token，启动时会自动弹出 QR 码登录")
             return CommandAction.RECONFIGURE_WECHAT
 
-        if choice == "__toggle_off__":
-            # 关闭前确认
+        if choice == "__toggle_wechat_off__":
             confirm = await questionary.confirm(
                 "确认关闭微信渠道？这会导致 WeChat Agent 停止工作。",
                 default=False,
@@ -1158,15 +1306,41 @@ async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
                 print(f"  ✓ 微信渠道已关闭")
                 return CommandAction.RECONFIGURE_WECHAT
 
-        if choice == "__edit_token__":
+        if choice == "__toggle_telegram_on__":
+            runtime.telegram_enabled = True
+            print(f"  ✓ Telegram 渠道已开启")
+            if not config.telegram.bot_token:
+                print(f"  ℹ 请通过 /interface 命令配置 Bot Token")
+            return CommandAction.RECONFIGURE_WECHAT
+
+        if choice == "__toggle_telegram_off__":
+            confirm = await questionary.confirm(
+                "确认关闭 Telegram 渠道？",
+                default=False,
+            ).ask_async()
+            if confirm:
+                runtime.telegram_enabled = False
+                print(f"  ✓ Telegram 渠道已关闭")
+                return CommandAction.RECONFIGURE_WECHAT
+
+        if choice == "__edit_wechat_token__":
             new_token = await questionary.password(
                 "输入 iLink Bot Token (留空保持不变):",
             ).ask_async()
             if new_token is not None and new_token.strip():
                 config.wechat.bot_token = new_token.strip()
-                print(f"  ✓ Bot Token 已更新")
-                # Token 变更不会自动生效，需要重建 WeChat Agent
+                print(f"  ✓ 微信 Bot Token 已更新")
                 if runtime.wechat_enabled:
+                    return CommandAction.RECONFIGURE_WECHAT
+
+        if choice == "__edit_telegram_token__":
+            new_token = await questionary.password(
+                "输入 Telegram Bot Token (留空保持不变):",
+            ).ask_async()
+            if new_token is not None and new_token.strip():
+                config.telegram.bot_token = new_token.strip()
+                print(f"  ✓ Telegram Bot Token 已更新")
+                if runtime.telegram_enabled:
                     return CommandAction.RECONFIGURE_WECHAT
 
     return CommandAction.NONE
