@@ -589,6 +589,107 @@ class MemoryAgent(BaseAgent):
         # ─── 5. 自动保存会话状态 ────────────────────
         await self.save_state()
 
+        # ─── 6. AI 自动命名会话 ─────────────────────
+        await self._auto_name_session()
+
+    # ═══════════════════════════════════════════════════════
+    # AI 会话自动命名
+    # ═══════════════════════════════════════════════════════
+
+    # 自动命名触发阈值（每 N 轮更新标题）
+    AUTO_NAME_INTERVAL = 10
+
+    # 自动命名 prompt — 轻量级，max 50 tokens
+    AUTO_NAME_PROMPT = (
+        "从以下对话中提取一个简短标题（5-8字，描述对话主题或用户意图）：\n\n"
+        "用户: {user_msg}\n\n"
+        "助手: {assistant_reply}\n\n"
+        "只返回标题文本，不要引号、标点或其他内容。\n"
+        "标题示例: Python入门学习, 天气查询, 项目架构讨论, 周末旅行计划"
+    )
+
+    async def _auto_name_session(self) -> None:
+        """AI 自动命名会话 — 首轮后生成标题，每 10 轮更新
+
+        触发条件:
+          1. SessionManager 已配置且会话已加载
+          2. 会话来源是 CLI（WeChat 自动管理，API 不需要）
+          3. turn_count == 1（首次对话后）或 turn_count % 10 == 0（周期更新）
+          4. 会话名仍是默认名或需要更新
+
+        LLM 失败时静默跳过，不影响正常对话流程。
+        """
+        if not self._session_manager or not self._session_loaded:
+            return
+
+        sid = self._session_manager.get_current_session_id()
+        if not sid:
+            return
+
+        info = self._session_manager.get_session(sid)
+        if not info:
+            return
+
+        # 仅对 CLI 会话自动命名
+        if info.source != "cli":
+            return
+
+        turn_count = info.turn_count
+
+        # 触发条件: 第 1 轮（首次）或每 10 轮更新
+        if turn_count != 1 and turn_count % self.AUTO_NAME_INTERVAL != 0:
+            return
+
+        # 需要重命名的情况:
+        #   - 首轮后名称仍是 "新对话"（默认名）
+        #   - 周期更新（第 10、20、30... 轮）
+        is_default_name = info.name == "新对话"
+        is_periodic_update = turn_count > 1 and turn_count % self.AUTO_NAME_INTERVAL == 0
+
+        if not is_default_name and not is_periodic_update:
+            return
+
+        # 用最近的对话内容生成标题
+        if not self._conversation_history:
+            return
+
+        last_turn = self._conversation_history[-1]
+        user_msg = last_turn.get("user", "")[:200]
+        assistant_reply = last_turn.get("assistant", "")[:200]
+
+        if not user_msg:
+            return
+
+        prompt = self.AUTO_NAME_PROMPT.format(
+            user_msg=user_msg,
+            assistant_reply=assistant_reply,
+        )
+
+        try:
+            # 5 秒超时，不影响对话流程
+            result = await asyncio.wait_for(
+                self._call_llm_with_fallback(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=20,
+                    temperature=0.3,
+                ),
+                timeout=5.0,
+            )
+            if result:
+                title = result.strip()[:12]  # 最多 12 字
+                # 清理可能的引号和标点
+                title = title.strip('"\'').replace('\n', '').strip()
+                if title and title != info.name:
+                    self._session_manager.rename_session(sid, title)
+                    logger.info(
+                        "[MemoryAgent] 自动命名会话: {} → {}",
+                        sid, title,
+                    )
+        except asyncio.TimeoutError:
+            logger.debug("[MemoryAgent] 自动命名超时，跳过")
+        except Exception as e:
+            logger.debug("[MemoryAgent] 自动命名失败: %s", e)
+
     # ═══════════════════════════════════════════════════════
     # Level 1: 临时知识提取
     # ═══════════════════════════════════════════════════════

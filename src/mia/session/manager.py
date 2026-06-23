@@ -389,7 +389,7 @@ class SessionManager:
             session = cli_sessions[0]
         else:
             # 创建默认会话
-            session = self.create_session("默认", source="cli")
+            session = self.create_session("新对话", source="cli")
 
         # 自动设置为当前活跃会话
         if not self._current_session_id:
