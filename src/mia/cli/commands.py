@@ -1292,8 +1292,8 @@ async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
 
         if choice == "__toggle_wechat_on__":
             runtime.wechat_enabled = True
-            print(f"  ✓ 微信渠道已开启")
-            print(f"  ℹ 如果未配置 Bot Token，启动时会自动弹出 QR 码登录")
+            runtime.save_runtime_state()
+            print(f"  ✓ 微信渠道已开启（已保存，重启后自动启用）")
             return CommandAction.RECONFIGURE_WECHAT
 
         if choice == "__toggle_wechat_off__":
@@ -1303,12 +1303,14 @@ async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
             ).ask_async()
             if confirm:
                 runtime.wechat_enabled = False
+                runtime.save_runtime_state()
                 print(f"  ✓ 微信渠道已关闭")
                 return CommandAction.RECONFIGURE_WECHAT
 
         if choice == "__toggle_telegram_on__":
             runtime.telegram_enabled = True
-            print(f"  ✓ Telegram 渠道已开启")
+            runtime.save_runtime_state()
+            print(f"  ✓ Telegram 渠道已开启（已保存，重启后自动启用）")
             if not config.telegram.bot_token:
                 print(f"  ℹ 请通过 /interface 命令配置 Bot Token")
             return CommandAction.RECONFIGURE_WECHAT
@@ -1320,6 +1322,7 @@ async def handle_channel_command(runtime: RuntimeConfig) -> CommandAction:
             ).ask_async()
             if confirm:
                 runtime.telegram_enabled = False
+                runtime.save_runtime_state()
                 print(f"  ✓ Telegram 渠道已关闭")
                 return CommandAction.RECONFIGURE_WECHAT
 

@@ -5,6 +5,7 @@
 支持 .env 文件自动加载和环境变量覆盖。
 """
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -190,6 +191,36 @@ class RuntimeConfig:
         enabled = self.model_enabled.get(model_id, False)
         return has_key and enabled
 
+    # ─── 持久化渠道开关 ────────────────────────────
+
+    _STATE_FILE = Path(__file__).parent.parent.parent / "data" / "config.json"
+
+    def load_runtime_state(self) -> None:
+        """从 data/config.json 恢复渠道开关状态"""
+        try:
+            if self._STATE_FILE.exists():
+                data = json.loads(self._STATE_FILE.read_text(encoding="utf-8"))
+                if data.get("wechat_enabled"):
+                    self.wechat_enabled = True
+                if data.get("telegram_enabled"):
+                    self.telegram_enabled = True
+        except Exception:
+            pass  # 文件损坏时静默跳过，使用默认值
+
+    def save_runtime_state(self) -> None:
+        """持久化渠道开关状态到 data/config.json（原子写入）"""
+        try:
+            self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "wechat_enabled": self.wechat_enabled,
+                "telegram_enabled": self.telegram_enabled,
+            }
+            tmp = self._STATE_FILE.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(self._STATE_FILE)
+        except Exception:
+            pass  # 写入失败不影响运行
+
 
 class Config:
     """全局配置聚合"""
@@ -208,6 +239,8 @@ class Config:
                 "deepseek": self.deepseek.api_key,
             },
         )
+        # 恢复上次持久化的渠道开关状态
+        self.runtime.load_runtime_state()
 
         # 确保工作目录存在
         Path(self.agent.workspace_dir).mkdir(parents=True, exist_ok=True)
