@@ -1,1 +1,6 @@
-// CLI commands will be added in Phase 6
+export {
+  handleModelCommand,
+  handleAgentCommand,
+  handleChannelCommand,
+  CommandAction,
+} from './commands.js';

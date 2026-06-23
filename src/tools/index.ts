@@ -1,2 +1,5 @@
 export { Tool, type ToolResult } from './base.js';
-// Individual tools will be added in Phase 5
+export { WebSearchTool } from './web-search.js';
+export { WeatherTool } from './weather.js';
+export { ShellTool } from './shell.js';
+export { FileTool } from './file.js';
