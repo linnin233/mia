@@ -25,8 +25,8 @@ function draw() {
   const h = rows;
   const innerW = w - 2;
 
-  // 清屏 + 光标归位
-  let out = '\x1b[2J\x1b[H';
+  // 光标归位 → 清屏（含滚动缓冲区）
+  let out = '\x1b[H\x1b[2J\x1b[3J';
 
   // ─── 顶边框 ─────────────────────────────────
   out += B.tl + B.h.repeat(innerW) + B.tr + '\n';
@@ -60,10 +60,11 @@ function draw() {
 
 // ─── 启动 ────────────────────────────────────────────────
 function main() {
-  // 交替屏幕缓冲区
-  process.stdout.write('\x1b[?1049h');
-  // 隐藏光标
-  process.stdout.write('\x1b[?25l');
+  // 交替屏幕 + 隐藏光标
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
+
+  // 初始绘制（同步，紧跟交替屏幕）
+  draw();
 
   // raw mode
   readline.emitKeypressEvents(process.stdin);
@@ -71,7 +72,7 @@ function main() {
     process.stdin.setRawMode(true);
   }
 
-  // resize
+  // resize 时重绘
   process.stdout.on('resize', draw);
 
   // 按键
@@ -81,8 +82,6 @@ function main() {
       process.exit(0);
     }
   });
-
-  draw();
 }
 
 function cleanup() {
