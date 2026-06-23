@@ -261,6 +261,7 @@ async function runAgentPipeline(
       MessageType.EXECUTE_TASK,
       MessageType.TASK_RESULT,
       MessageType.TASK_ERROR,
+      MessageType.TUI_THOUGHT,
     ];
     for (const mt of eventMirrorTypes) {
       bus.subscribeMirror(mt, 'main');
@@ -319,6 +320,13 @@ async function runAgentPipeline(
             break;
           case MessageType.STREAM_END:
             events.onStreamEnd?.((msg.payload['message'] as string) || '');
+            break;
+          case MessageType.TUI_THOUGHT:
+            events.onThought?.(
+              (msg.payload['agent'] as string) || 'scheduler',
+              (msg.payload['title'] as string) || '',
+              (msg.payload['detail'] as string) || '',
+            );
             break;
           case MessageType.EXECUTE_TASK:
             events.onTool?.(

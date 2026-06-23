@@ -31,6 +31,7 @@ import {
   makeStreamStart,
   makeStreamChunk,
   makeStreamEnd,
+  makeTuiThought,
 } from '../bus/message.js';
 import { BaseProvider } from '../providers/base.js';
 import { getConfig } from '../config.js';
@@ -574,7 +575,7 @@ export class SchedulerAgent extends BaseAgent {
     ));
   }
 
-  /** 结构化输出思考过程 */
+  /** 结构化输出思考过程 — 同时发布到 MessageBus 供 TUI/WebSocket 使用 */
   private _printThought(title: string, detail: string): void {
     const verbose = getConfig().agent.verbose;
     console.log(`\x1b[36m[Scheduler]\x1b[0m ${title}`);
@@ -583,5 +584,11 @@ export class SchedulerAgent extends BaseAgent {
         console.log(`   \x1b[90m├─\x1b[0m ${line}`);
       }
     }
+    // 发布到 MessageBus 给 TUI / WebSocket 消费
+    this.bus.publish(
+      makeTuiThought('scheduler', title, detail, this._sessionId),
+    ).catch(() => {
+      // 忽略发布失败（总线可能已关闭）
+    });
   }
 }
