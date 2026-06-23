@@ -503,10 +503,24 @@ async def run_cli_interactive(enable_wechat: bool = False) -> None:
     # ─── 会话管理 ──────────────────────────────
     session_manager = SessionManager()
     session_manager.load_index()
-    # 确保有默认 CLI 会话
-    default_session = session_manager.get_or_create_default()
-    session_manager.set_current(default_session.session_id)
-    print(f"  \033[90m会话: {default_session.name} ({default_session.session_id})\033[0m")
+
+    # 恢复上次活跃会话（可能是 CLI 或 WeChat）
+    current_id = session_manager.get_current_session_id()
+    if current_id and session_manager.get_session(current_id):
+        # 已有活跃会话，直接使用
+        info = session_manager.get_session(current_id)
+        source_tag = {"cli": "CLI", "wechat": "微信", "api": "API"}.get(
+            info.source, info.source,
+        )
+        print(
+            f"  \033[90m会话: \033[36m{info.name}\033[0m"
+            f"\033[90m ({info.session_id}) [{source_tag} · {info.turn_count}轮]\033[0m"
+        )
+    else:
+        # 首次启动或无活跃会话 → 创建默认 CLI 会话
+        default_session = session_manager.get_or_create_default()
+        session_manager.set_current(default_session.session_id)
+        print(f"  \033[90m会话: {default_session.name} ({default_session.session_id})\033[0m")
 
     bus = MessageBus(max_queue_size=100)
     await bus.start()

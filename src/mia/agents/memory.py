@@ -209,9 +209,23 @@ class MemoryAgent(BaseAgent):
             last_active = self._session_manager.get_current_session_id()
             if last_active:
                 await self.load_state(last_active)
-                logger.info(
-                    "[MemoryAgent] 已恢复会话: %s", last_active,
-                )
+                info = self._session_manager.get_session(last_active)
+                name = info.name if info else last_active
+                hist_count = len(self._conversation_history)
+                working_count = len(self._working_memory)
+                if hist_count > 0 or working_count > 0:
+                    # 有可恢复的内容，显式告知用户
+                    print(
+                        f"\033[34m[MemoryAgent]\033[0m "
+                        f"已恢复会话 \033[36m{name}\033[0m "
+                        f"({hist_count}轮历史, {working_count}条临时记忆)"
+                    )
+                else:
+                    # 新会话或空历史
+                    print(
+                        f"\033[34m[MemoryAgent]\033[0m "
+                        f"当前会话: \033[36m{name}\033[0m (新对话)"
+                    )
             else:
                 # 没有活跃会话 → 确保有默认会话 → 初始化
                 default = self._session_manager.get_or_create_default()

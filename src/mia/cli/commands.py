@@ -1287,7 +1287,15 @@ async def handle_session_command(
             memory_agent.clear_state()
             session_manager.set_current(target_id)
             await memory_agent.load_state(target_id)
-            print(f"  \033[32m✓\033[0m 已切换到会话: \033[36m{target_info.name}\033[0m")
+            # 统计加载的内容
+            hist_count = len(memory_agent._conversation_history)
+            working_count = len(memory_agent._working_memory)
+            detail = ""
+            if hist_count > 0:
+                detail = f" (恢复 {hist_count}轮历史)"
+            elif working_count > 0:
+                detail = f" (恢复 {working_count}条记忆)"
+            print(f"  \033[32m✓\033[0m 已切换到会话: \033[36m{target_info.name}\033[0m{detail}")
             print()
             continue
 
