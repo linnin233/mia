@@ -34,12 +34,14 @@ const _origLog = console.log;
 const _origWarn = console.warn;
 const _origError = console.error;
 
-/** 在 TUI 模式下压制 console 输出（避免冲破 Ink 布局） */
+/** 在 TUI 模式下压制控制台输出（保留 error 用于崩溃诊断） */
 function suppressConsole() {
   const noop = () => {};
   console.log = noop;
   console.warn = noop;
-  // error 保留给真正的崩溃信息
+  console.info = noop;
+  console.debug = noop;
+  // console.error 保留，确保崩溃信息可见
 }
 
 function restoreConsole() {
