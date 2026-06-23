@@ -613,7 +613,17 @@ const wsClients: Set<WebSocket> = new Set();
 function broadcastLog(text: string): void {
   const payload = JSON.stringify({ type: 'log', text, ts: Date.now() });
   for (const ws of wsClients) {
-    if (ws.readyState === 1) { // ws.OPEN
+    if (ws.readyState === 1) {
+      try { ws.send(payload); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** 广播微信事件到所有 WebSocket 客户端 */
+function broadcastWechat(event: Record<string, unknown>): void {
+  const payload = JSON.stringify({ ts: Date.now(), ...event });
+  for (const ws of wsClients) {
+    if (ws.readyState === 1) {
       try { ws.send(payload); } catch { /* ignore */ }
     }
   }
@@ -631,7 +641,7 @@ function sendRecentLogs(ws: WebSocket): void {
   }
 }
 
-async function runServer(port: number): Promise<void> {
+async function runServer(port: number, enableWechat: boolean): Promise<void> {
   // 动态导入 fastify（仅在 server 模式需要）
   try {
     const { default: Fastify } = await import('fastify');
@@ -748,6 +758,19 @@ async function runServer(port: number): Promise<void> {
       handleWsConnection(ws);
     });
 
+    // ─── 微信渠道 (可选) ──────────────────────────
+    if (enableWechat) {
+      console.log('  微信渠道启动中...');
+      broadcastWechat({ type: 'wechat_status', status: 'qr_pending', user_name: '' });
+      // 延迟启动微信客户端（避免阻塞服务器启动）
+      setTimeout(() => {
+        startWechatChannel().catch((err) => {
+          console.error('[WeChat] 启动失败:', err);
+          broadcastWechat({ type: 'wechat_status', status: 'offline', user_name: '' });
+        });
+      }, 1000);
+    }
+
     console.log(`  MIA HTTP API 已启动: http://127.0.0.1:${port}`);
     console.log(`  API 端点: GET /health, POST /chat, WS /ws`);
   } catch (err) {
@@ -797,6 +820,13 @@ function handleWsConnection(ws: WebSocket): void {
       importance: e.importance,
       created_at: e.created_at,
     }));
+  }, async (action) => {
+    // 微信控制
+    if (action === 'start') {
+      broadcastWechat({ type: 'wechat_status', status: 'qr_pending', user_name: '' });
+    } else {
+      broadcastWechat({ type: 'wechat_status', status: 'offline', user_name: '' });
+    }
   });
 
   // 启动中继器（异步，不阻塞）
@@ -817,13 +847,76 @@ function handleWsConnection(ws: WebSocket): void {
   });
 }
 
+/**
+ * 启动微信渠道 (服务器模式基础支持)
+ *
+ * 微信渠道需要终端扫码交互，完整功能请使用 CLI 模式:
+ *   npm run dev -- --wechat
+ *
+ * 服务器模式下仅广播状态到 Web GUI。
+ */
+async function startWechatChannel(): Promise<void> {
+  console.log('[WeChat] 微信渠道在服务器模式下功能有限，建议使用 CLI 模式: npm run dev -- --wechat');
+  broadcastWechat({ type: 'wechat_status', status: 'qr_pending', user_name: '' });
+
+  try {
+    const { ILinkClient } = await import('./channels/wechat/client.js');
+    const client = new ILinkClient();
+
+    const qrResp = await client.getBotQrcode();
+    if (qrResp.qrcode_img_content) {
+      // 终端打印 QR 码
+      console.log('[WeChat] 请扫描上方二维码登录');
+      // 尝试发送 QR 到 Web GUI（base64 图片数据）
+      broadcastWechat({
+        type: 'wechat_qr',
+        qr_url: '',
+        qr_data: typeof qrResp.qrcode_img_content === 'string'
+          ? qrResp.qrcode_img_content : qrResp.qrcode || '',
+      });
+    }
+
+    // 等待登录 (最多 5 分钟)
+    const [botToken, baseUrl] = await client.waitForLogin(qrResp.qrcode || '');
+    console.log(`[WeChat] 已登录`);
+
+    // 用 bot token 重新创建客户端
+    const authedClient = new ILinkClient(botToken, baseUrl);
+    broadcastWechat({ type: 'wechat_status', status: 'online', user_name: '微信用户' });
+
+    // 消息轮询
+    let cursor = '';
+    const pollMsgs = async () => {
+      try {
+        const updates = await authedClient.getupdates(cursor);
+        cursor = (updates as any).next_cursor || cursor;
+        const events = (updates as any).events || (updates as any).data || [];
+        for (const ev of events) {
+          if (ev.msg_type === 'text' || ev.type === 'text') {
+            const text = ev.text || ev.content || '';
+            const fromUser = ev.from_user || ev.sender || ev.from || '';
+            broadcastWechat({ type: 'wechat_msg', from_user: fromUser, text, ts: Date.now() });
+          }
+        }
+      } catch {
+        // 轮询静默失败
+      }
+      setTimeout(pollMsgs, 2000);
+    };
+    pollMsgs();
+  } catch (err) {
+    console.error('[WeChat] 启动失败:', err);
+    broadcastWechat({ type: 'wechat_status', status: 'offline', user_name: '' });
+  }
+}
+
 // ─── 主入口 ──────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const args = parseArgs();
 
   if (args.server) {
-    await runServer(args.port);
+    await runServer(args.port, args.wechat);
   } else if (args.query) {
     await runCliQuery(args.query, args.image, args.voice);
   } else {

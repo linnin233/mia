@@ -50,7 +50,9 @@ export type WsServerEvent =
 export type WsClientEvent =
   | { type: 'chat'; query: string; image?: string; voice?: string }
   | { type: 'stop' }
-  | { type: 'memory_query' };
+  | { type: 'memory_query' }
+  | { type: 'wechat_start' }
+  | { type: 'wechat_stop' };
 
 /** WebSocket readyState 常量 (ws 库) */
 const WS_OPEN = 1;
@@ -104,16 +106,21 @@ export class WsRelay {
   /** 记忆查询函数（由外部注入） */
   private queryMemory: () => Promise<Array<Record<string, unknown>>>;
 
+  /** 微信控制函数（由外部注入） */
+  private wechatControl: (action: 'start' | 'stop') => Promise<void>;
+
   constructor(
     ws: WebSocket,
     sessionId: string,
     runPipeline: PipelineRunner,
     queryMemory: () => Promise<Array<Record<string, unknown>>>,
+    wechatControl: (action: 'start' | 'stop') => Promise<void>,
   ) {
     this.ws = ws;
     this.sessionId = sessionId;
     this.runPipeline = runPipeline;
     this.queryMemory = queryMemory;
+    this.wechatControl = wechatControl;
   }
 
   /**
@@ -152,6 +159,10 @@ export class WsRelay {
       this._handleStop();
     } else if (parsed.type === 'memory_query') {
       this._handleMemoryQuery();
+    } else if (parsed.type === 'wechat_start') {
+      this._handleWechatStart();
+    } else if (parsed.type === 'wechat_stop') {
+      this._handleWechatStop();
     } else {
       this._send({ type: 'error', message: `Unknown message type: ${(parsed as { type: string }).type}` });
     }
@@ -221,6 +232,24 @@ export class WsRelay {
       });
     } catch (err) {
       this._send({ type: 'error', message: `查询记忆失败: ${err}` });
+    }
+  }
+
+  /** 处理 wechat_start */
+  private async _handleWechatStart(): Promise<void> {
+    try {
+      await this.wechatControl('start');
+    } catch (err) {
+      this._send({ type: 'error', message: `微信启动失败: ${err}` });
+    }
+  }
+
+  /** 处理 wechat_stop */
+  private async _handleWechatStop(): Promise<void> {
+    try {
+      await this.wechatControl('stop');
+    } catch (err) {
+      this._send({ type: 'error', message: `微信停止失败: ${err}` });
     }
   }
 
