@@ -7,6 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx src/main.ts",
+    "tui": "tsx src/tui/entry.ts",
     "dev:wechat": "tsx src/main.ts --wechat",
     "build": "tsc",
     "start": "node dist/main.js",
@@ -16,20 +17,29 @@
     "lint": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
   },
-  "keywords": ["ai-agent", "llm", "multi-agent", "message-bus"],
+  "keywords": [
+    "ai-agent",
+    "llm",
+    "multi-agent",
+    "message-bus"
+  ],
   "license": "MIT",
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
     "chalk": "^5.3.0",
     "dotenv": "^16.4.0",
     "fastify": "^5.0.0",
+    "ink": "^5.2.1",
+    "ink-text-input": "^6.0.0",
     "openai": "^4.70.0",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
+    "react": "^18.3.1",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/react": "^18.3.31",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
