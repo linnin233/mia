@@ -76,6 +76,8 @@ class TelegramReceiverAgent(BaseAgent):
 
         # update_id 追踪（单调递增，用于去重 + offset）
         self._last_update_id: int = 0
+        # 硬去重阈值：id <= 此值的直接丢弃（不清空，防止 set 清空后重复）
+        self._last_processed_id: int = 0
 
         # ─── 消息去重 ────────────────────────────────
         self._processed_update_ids: set[int] = set()
@@ -221,6 +223,7 @@ class TelegramReceiverAgent(BaseAgent):
             while not self._stop_event.is_set():
                 try:
                     offset = self._last_update_id + 1 if self._last_update_id > 0 else 0
+                    logger.debug("[TelegramReceiver] poll offset=%d", offset)
                     data = await client.get_updates(offset=offset, timeout=30)
 
                     if data.get("ok"):
@@ -274,17 +277,21 @@ class TelegramReceiverAgent(BaseAgent):
             if not update_id:
                 return
 
-            # 更新 offset（确保消息确认）
-            if update_id > self._last_update_id:
-                self._last_update_id = update_id
-
-            # 去重
+            # 两层去重：阈值 + 集合
+            if update_id <= self._last_processed_id:
+                return
             if update_id in self._processed_update_ids:
                 return
             self._processed_update_ids.add(update_id)
+            self._last_processed_id = update_id
+            # 更新 offset（确保 Telegram 确认消息）
+            if update_id > self._last_update_id:
+                self._last_update_id = update_id
             # 限制去重集合大小
             if len(self._processed_update_ids) > self._max_processed_ids:
-                self._processed_update_ids.clear()
+                # 保留最近 500 条
+                keep = sorted(self._processed_update_ids)[-500:]
+                self._processed_update_ids = set(keep)
 
             # 提取 Message 对象
             message = update.get("message") or update.get("edited_message")

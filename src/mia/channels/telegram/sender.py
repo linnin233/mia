@@ -122,6 +122,7 @@ class TelegramSenderAgent(BaseAgent):
     async def handle(self, msg: Message) -> None:
         """消息分拣 — 文本/流式/语音"""
         if not self.enabled:
+            logger.debug("[TelegramSender] 渠道已禁用，忽略消息")
             return
 
         if msg.msg_type == MessageType.SEND_TEXT:
@@ -144,20 +145,18 @@ class TelegramSenderAgent(BaseAgent):
     async def _handle_send_text(self, msg: Message) -> None:
         """发送纯文本消息到 Telegram"""
         chat_id = self._get_chat_id(msg)
-        if not chat_id:
-            logger.warning("[TelegramSender] SEND_TEXT 缺少 chat_id")
-            return
-
         text = msg.payload.get("message", "") or msg.payload.get("text", "")
+        print(f"\033[34m[TelegramSender]\033[0m 收到 SEND_TEXT: chat={chat_id} text_len={len(text)}")
+        if not chat_id:
+            print(f"\033[33m[TelegramSender]\033[0m ⚠ 缺少 chat_id，无法发送")
+            return
         if not text:
             return
 
-        # 长文本分段发送（Telegram 限制 4096 字符）
         max_len = 4000
         if len(text) <= max_len:
             await self._send_text(chat_id, text)
         else:
-            # 分段发送
             parts = [text[i:i + max_len] for i in range(0, len(text), max_len)]
             for i, part in enumerate(parts):
                 prefix = f"({i + 1}/{len(parts)})\n" if len(parts) > 1 else ""
@@ -166,16 +165,21 @@ class TelegramSenderAgent(BaseAgent):
         await self._publish_done(msg, text)
 
     async def _send_text(self, chat_id: int, text: str) -> None:
-        """发送单条文本（带重试）"""
+        """发送单条文本"""
         if not self._client:
+            print(f"\033[31m[TelegramSender]\033[0m ✗ 客户端未初始化，无法发送")
             return
         try:
-            await self._client.send_message(chat_id, text)
-            logger.info(
-                "[TelegramSender] 已发送文字回复: chat=%s len=%d",
-                chat_id, len(text),
-            )
+            result = await self._client.send_message(chat_id, text)
+            ok = result.get("ok", False)
+            if ok:
+                print(f"\033[32m[TelegramSender]\033[0m ✓ 已发送: chat={chat_id} len={len(text)}")
+                logger.info("[TelegramSender] 已发送文字回复: chat=%s len=%d", chat_id, len(text))
+            else:
+                print(f"\033[31m[TelegramSender]\033[0m ✗ API 返回失败: {result.get('description', 'unknown')}")
+                logger.error("[TelegramSender] API 返回失败: %s", result)
         except Exception as e:
+            print(f"\033[31m[TelegramSender]\033[0m ✗ 发送异常: {e}")
             logger.error("[TelegramSender] 发送文字失败: %s", e)
 
     # ─── 流式回复 ──────────────────────────────────────
@@ -195,9 +199,12 @@ class TelegramSenderAgent(BaseAgent):
         """流式结束 — 发送完整文本到 Telegram"""
         chat_id = self._stream_chat_id or self._get_chat_id(msg)
         full_text = self._stream_buffer or msg.payload.get("text", "")
+        print(f"\033[34m[TelegramSender]\033[0m STREAM_END: chat={chat_id} text_len={len(full_text)} client={'OK' if self._client else 'NONE'}")
 
         if chat_id and full_text:
             await self._send_text(chat_id, full_text)
+        else:
+            print(f"\033[33m[TelegramSender]\033[0m ⚠ STREAM_END 无法发送: chat={chat_id} has_text={bool(full_text)}")
 
         await self._publish_done(msg, full_text)
         self._stream_buffer = ""
