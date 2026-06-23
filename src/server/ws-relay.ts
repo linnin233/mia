@@ -15,14 +15,15 @@
  * WebSocket 协议:
  *
  *   Server → Client:
- *     { type: "connected", sessionId: "..." }
- *     { type: "stream_start" }
- *     { type: "stream_chunk", delta: "..." }
- *     { type: "stream_end", fullMessage: "..." }
- *     { type: "thought", agent: "...", title: "...", detail: "..." }
- *     { type: "tool", name: "...", status: "running"|"success"|"error", args: "...", result: "..." }
- *     { type: "done" }
- *     { type: "error", message: "..." }
+ *     { type: "connected", sessionId: "...", ts: ... }
+ *     { type: "stream_start", ts: ... }
+ *     { type: "stream_chunk", delta: "...", ts: ... }
+ *     { type: "stream_end", fullMessage: "...", ts: ... }
+ *     { type: "thought", agent: "...", title: "...", detail: "...", ts: ... }
+ *     { type: "tool", name: "...", status: "running"|"success"|"error", args: "...", result: "...", ts: ... }
+ *     { type: "log", text: "...", ts: ... }
+ *     { type: "done", ts: ... }
+ *     { type: "error", message: "...", ts: ... }
  *
  *   Client → Server:
  *     { type: "chat", query: "...", image?: "...", voice?: "..." }
@@ -35,14 +36,15 @@ import type { WebSocket } from 'ws';
 
 /** Server → Client 事件 */
 export type WsServerEvent =
-  | { type: 'connected'; sessionId: string }
-  | { type: 'stream_start' }
-  | { type: 'stream_chunk'; delta: string }
-  | { type: 'stream_end'; fullMessage: string }
-  | { type: 'thought'; agent: string; title: string; detail: string }
-  | { type: 'tool'; name: string; status: 'running' | 'success' | 'error'; args: string; result: string }
-  | { type: 'done' }
-  | { type: 'error'; message: string };
+  | { type: 'connected'; sessionId: string; ts: number }
+  | { type: 'stream_start'; ts: number }
+  | { type: 'stream_chunk'; delta: string; ts: number }
+  | { type: 'stream_end'; fullMessage: string; ts: number }
+  | { type: 'thought'; agent: string; title: string; detail: string; ts: number }
+  | { type: 'tool'; name: string; status: 'running' | 'success' | 'error'; args: string; result: string; ts: number }
+  | { type: 'log'; text: string; ts: number }
+  | { type: 'done'; ts: number }
+  | { type: 'error'; message: string; ts: number };
 
 /** Client → Server 事件 */
 export type WsClientEvent =
@@ -211,10 +213,12 @@ export class WsRelay {
 
   // ─── 工具方法 ──────────────────────────────────────
 
-  /** 发送 WebSocket 事件（JSON 序列化） */
-  private _send(event: WsServerEvent): void {
+  /** 发送 WebSocket 事件（JSON 序列化，自动附加时间戳） */
+  private _send(event: Record<string, unknown>): void {
     if (!this.alive || this.ws.readyState !== WS_OPEN) return;
     try {
+      // 自动附加毫秒级时间戳
+      event.ts = Date.now();
       this.ws.send(JSON.stringify(event));
     } catch {
       // 发送失败，标记为断线

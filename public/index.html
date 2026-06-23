@@ -207,6 +207,8 @@
     .side-section.thoughts.collapsed { flex: 0 0 auto; }    /* 收起后只占 header 高度 */
     .side-section.tools { flex: 0 1 50%; }
     .side-section.tools.collapsed { flex: 0 0 auto; }       /* 收起后只占 header 高度 */
+    .side-section.logs-section { flex: 0 1 30%; border-top: 1px solid var(--border); }
+    .side-section.logs-section.collapsed { flex: 0 0 auto; }
     
     /* 当 Thinking 收起时，Tools 自动撑满剩余空间 */
     .side-section.thoughts.collapsed ~ .side-section.tools:not(.collapsed) { flex: 1; }
@@ -288,6 +290,12 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .thought-card .thought-ts {
+      color: var(--text-dim);
+      font-size: 9px;
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
     .thought-card .thought-expand {
       font-size: 9px;
       color: var(--text-dim);
@@ -354,6 +362,12 @@
       gap: 6px;
     }
     .tool-card .tool-name-text { flex: 1; }
+    .tool-card .tool-ts {
+      color: var(--text-dim);
+      font-size: 9px;
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
     .tool-card .tool-status {
       font-size: 10px;
       padding: 1px 6px;
@@ -405,6 +419,31 @@
       text-align: center;
       padding: 20px 0;
       opacity: 0.6;
+    }
+
+    /* ─── Log Panel ──────────────────────────── */
+    .log-body {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+    .log-entry {
+      color: var(--text-dim);
+      padding: 1px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border-bottom: 1px solid rgba(255,255,255,0.02);
+      display: flex;
+      gap: 6px;
+    }
+    .log-entry .log-ts {
+      color: var(--text-dim);
+      opacity: 0.4;
+      flex-shrink: 0;
+      font-size: 9px;
+    }
+    .log-entry .log-text {
+      flex: 1;
     }
 
     /* ─── Input Bar ───────────────────────────── */
@@ -522,6 +561,16 @@
             <div class="empty-hint">Tool executions will appear here</div>
           </div>
         </div>
+        <!-- Logs Section -->
+        <div class="side-section logs-section">
+          <div class="section-header" onclick="toggleSection(this)">
+            📋 Logs
+            <span class="toggle">▼</span>
+          </div>
+          <div class="section-body log-body" id="logs-body">
+            <div class="empty-hint">Backend logs will appear here</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -558,6 +607,7 @@
     const statusText = $('#status-text');
     const thoughtsBody = $('#thoughts-body');
     const toolsBody = $('#tools-body');
+    const logsBody = $('#logs-body');
 
     // ─── WebSocket Connection ───────────────────────────
     function connect() {
@@ -620,11 +670,15 @@
           break;
 
         case 'thought':
-          addThought(msg.agent || 'Agent', msg.title || '', msg.detail || '');
+          addThought(msg.agent || 'Agent', msg.title || '', msg.detail || '', msg.ts || 0);
           break;
 
         case 'tool':
-          addTool(msg.name || 'tool', msg.status || 'running', msg.args || '', msg.result || '');
+          addTool(msg.name || 'tool', msg.status || 'running', msg.args || '', msg.result || '', msg.ts || 0);
+          break;
+
+        case 'log':
+          addLog(msg.text || '', msg.ts || 0);
           break;
 
         case 'done':
@@ -706,7 +760,7 @@
     }
 
     // ─── Thoughts ───────────────────────────────────────
-    function addThought(agent, title, detail) {
+    function addThought(agent, title, detail, ts) {
       // Remove empty hint
       const hint = thoughtsBody.querySelector('.empty-hint');
       if (hint) hint.remove();
@@ -719,6 +773,7 @@
         <div class="thought-header">
           <span class="thought-agent">${escapeHtml(agent)}</span>
           <span class="thought-title">${escapeHtml(title)}</span>
+          <span class="thought-ts">${formatTime(ts)}</span>
           <span class="thought-expand">▶</span>
         </div>
         ${hasDetail ? `<div class="thought-detail">${escapeHtml(detail)}</div>` : ''}
@@ -738,7 +793,7 @@
     }
 
     // ─── Tools ──────────────────────────────────────────
-    function addTool(name, status, args, result) {
+    function addTool(name, status, args, result, ts) {
       // Remove empty hint
       const hint = toolsBody.querySelector('.empty-hint');
       if (hint) hint.remove();
@@ -789,6 +844,7 @@
       card.innerHTML = `
         <div class="tool-name">
           <span class="tool-name-text">${escapeHtml(name)}</span>
+          <span class="tool-ts">${formatTime(ts)}</span>
           <span class="tool-status">${status}</span>
           <span class="tool-expand${hasBody ? '' : ' hidden'}">▶</span>
         </div>
@@ -822,6 +878,55 @@
       if (!btn) return;
       const hasContent = card.querySelector('.tool-args, .tool-result');
       btn.classList.toggle('hidden', !hasContent);
+    }
+
+    // ─── Logs ─────────────────────────────────────────
+    function addLog(text, ts) {
+      // Remove empty hint
+      const hint = logsBody.querySelector('.empty-hint');
+      if (hint) hint.remove();
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `
+        <span class="log-ts">${formatTime(ts)}</span>
+        <span class="log-text">${escapeHtml(text)}</span>
+      `;
+      logsBody.appendChild(entry);
+      logsBody.scrollTop = logsBody.scrollHeight;
+
+      // Limit to 500 log entries
+      while (logsBody.children.length > 500) {
+        logsBody.firstChild.remove();
+      }
+    }
+
+    // ─── Logs ─────────────────────────────────────────
+    function addLog(text, ts) {
+      // Remove empty hint
+      const hint = logsBody.querySelector('.empty-hint');
+      if (hint) hint.remove();
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `
+        <span class="log-ts">${formatTime(ts)}</span>
+        <span class="log-text">${escapeHtml(text)}</span>
+      `;
+      logsBody.appendChild(entry);
+      logsBody.scrollTop = logsBody.scrollHeight;
+
+      // Limit to 500 log entries
+      while (logsBody.children.length > 500) {
+        logsBody.firstChild.remove();
+      }
+    }
+
+    // ─── Helpers ─────────────────────────────────────
+    function formatTime(ts) {
+      if (!ts) return '--:--:--';
+      const d = new Date(ts);
+      return d.toLocaleTimeString('zh-CN', { hour12: false });
     }
 
     // ─── User Actions ───────────────────────────────────

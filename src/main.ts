@@ -602,10 +602,67 @@ async function runCliInteractive(enableWechat = false): Promise<void> {
 
 // ─── HTTP API 服务模式 ──────────────────────────────────
 
+/** 存储最近 N 条日志的环形缓冲区 */
+const logRingBuffer: string[] = [];
+const LOG_RING_MAX = 200;
+
+/** 所有已连接的 WebSocket 客户端 */
+const wsClients: Set<WebSocket> = new Set();
+
+/** 广播日志到所有 WebSocket 客户端 */
+function broadcastLog(text: string): void {
+  const payload = JSON.stringify({ type: 'log', text, ts: Date.now() });
+  for (const ws of wsClients) {
+    if (ws.readyState === 1) { // ws.OPEN
+      try { ws.send(payload); } catch { /* ignore */ }
+    }
+  }
+}
+
+/** 发送历史日志给新连接的客户端 */
+function sendRecentLogs(ws: WebSocket): void {
+  const recent = logRingBuffer.slice(-50);
+  for (const text of recent) {
+    if (ws.readyState === 1) {
+      try {
+        ws.send(JSON.stringify({ type: 'log', text, ts: Date.now() }));
+      } catch { return; }
+    }
+  }
+}
+
 async function runServer(port: number): Promise<void> {
   // 动态导入 fastify（仅在 server 模式需要）
   try {
     const { default: Fastify } = await import('fastify');
+
+    // ─── 拦截 console.log → WebSocket 日志 ──────────
+    const originalLog = console.log.bind(console);
+    const originalError = console.error.bind(console);
+    const originalWarn = console.warn.bind(console);
+
+    function addLog(text: string): void {
+      // 存入环形缓冲区
+      logRingBuffer.push(text);
+      if (logRingBuffer.length > LOG_RING_MAX) {
+        logRingBuffer.shift();
+      }
+      // 广播到所有 WebSocket 客户端
+      broadcastLog(text);
+    }
+
+    console.log = (...args: unknown[]) => {
+      originalLog(...args);
+      addLog(args.map(String).join(' '));
+    };
+    console.error = (...args: unknown[]) => {
+      originalError(...args);
+      addLog('[ERR] ' + args.map(String).join(' '));
+    };
+    console.warn = (...args: unknown[]) => {
+      originalWarn(...args);
+      addLog('[WARN] ' + args.map(String).join(' '));
+    };
 
     // ─── 创建共享 HTTP Server ───────────────────────
     // 先创建原生 HTTP server，让 Fastify 和 ws 共享同一个 server
@@ -707,6 +764,11 @@ async function runServer(port: number): Promise<void> {
 function handleWsConnection(ws: WebSocket): void {
   const sessionId = `ws_${crypto.randomBytes(6).toString('hex')}`;
 
+  // 注册到客户端列表
+  wsClients.add(ws);
+  // 发送最近日志给新客户端
+  sendRecentLogs(ws);
+
   console.log(`[WS] 新连接: ${sessionId}`);
 
   // 为每个连接创建独立的 MessageBus（WsRelay 和 pipeline 共享）
@@ -729,6 +791,7 @@ function handleWsConnection(ws: WebSocket): void {
   // 断线时清理
   ws.on('close', () => {
     console.log(`[WS] 连接断开: ${sessionId}`);
+    wsClients.delete(ws);
     // 清理共享的 bus
     bus.stop().catch(() => {});
   });
