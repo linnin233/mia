@@ -187,20 +187,84 @@ export class MemoryStore {
     return this._filePath;
   }
 
-  /** 从文件加载 */
+  /** 从文件加载 — 兼容 Python 版 index.json + daily/ 格式 */
   load(): void {
+    // 1. 优先加载 JS 格式 store.json
     try {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
         const data: KnowledgeEntryData[] = JSON.parse(raw);
-        this._entries = data.map((d) => KnowledgeEntry.fromJSON(d));
+        if (data.length > 0) {
+          this._entries = data.map((d) => KnowledgeEntry.fromJSON(d));
+          console.log(
+            `\x1b[34m[MemoryStore]\x1b[0m 已加载 ${this._entries.length} 条持久记忆 (store.json)`,
+          );
+          return;
+        }
+      }
+    } catch {
+      // store.json 损坏，继续尝试 Python 格式
+    }
+
+    // 2. 尝试加载 Python 格式: index.json + daily/YYYY-MM-DD.json
+    const memoryDir = path.dirname(this.filePath);
+    const indexPath = path.join(memoryDir, 'index.json');
+    if (!fs.existsSync(indexPath)) {
+      // 检查备用路径: data/memory/ (Python 版默认)
+      const altDir = path.resolve('data', 'memory');
+      const altIndex = path.join(altDir, 'index.json');
+      if (fs.existsSync(altIndex)) {
+        this._loadPythonFormat(altDir);
+        return;
+      }
+      console.log(`\x1b[34m[MemoryStore]\x1b[0m 无记忆数据`);
+      return;
+    }
+    this._loadPythonFormat(memoryDir);
+  }
+
+  /** 加载 Python 版 index.json + daily/ 格式 */
+  private _loadPythonFormat(memoryDir: string): void {
+    try {
+      const indexPath = path.join(memoryDir, 'index.json');
+      const indexRaw = fs.readFileSync(indexPath, 'utf-8');
+      const index = JSON.parse(indexRaw) as {
+        version: number;
+        updated: string;
+        days: Record<string, { file: string; entry_count: number }>;
+      };
+
+      const allEntries: KnowledgeEntry[] = [];
+
+      for (const [_date, dayInfo] of Object.entries(index.days || {})) {
+        const dayFile = path.join(memoryDir, dayInfo.file);
+        if (!fs.existsSync(dayFile)) continue;
+        try {
+          const dayRaw = fs.readFileSync(dayFile, 'utf-8');
+          const dayEntries: KnowledgeEntryData[] = JSON.parse(dayRaw);
+          for (const de of dayEntries) {
+            allEntries.push(KnowledgeEntry.fromJSON(de));
+          }
+        } catch {
+          // 跳过损坏的 daily 文件
+        }
+      }
+
+      this._entries = allEntries;
+      console.log(
+        `\x1b[34m[MemoryStore]\x1b[0m 已加载 ${this._entries.length} 条持久记忆 (Python index.json + daily/)`,
+      );
+
+      // 自动迁移到 JS 格式 store.json
+      if (this._entries.length > 0) {
+        this.save();
         console.log(
-          `\x1b[34m[MemoryStore]\x1b[0m 已加载 ${this._entries.length} 条持久记忆`,
+          `\x1b[34m[MemoryStore]\x1b[0m 已迁移到 store.json`,
         );
       }
     } catch (err) {
       console.warn(
-        `\x1b[33m[MemoryStore]\x1b[0m 加载失败: ${err}`,
+        `\x1b[33m[MemoryStore]\x1b[0m Python 格式加载失败: ${err}`,
       );
       this._entries = [];
     }
