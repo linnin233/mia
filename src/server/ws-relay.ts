@@ -49,7 +49,8 @@ export type WsServerEvent =
 /** Client → Server 事件 */
 export type WsClientEvent =
   | { type: 'chat'; query: string; image?: string; voice?: string }
-  | { type: 'stop' };
+  | { type: 'stop' }
+  | { type: 'memory_query' };
 
 /** WebSocket readyState 常量 (ws 库) */
 const WS_OPEN = 1;
@@ -100,14 +101,19 @@ export class WsRelay {
   /** Agent 管线执行函数（由外部注入） */
   private runPipeline: PipelineRunner;
 
+  /** 记忆查询函数（由外部注入） */
+  private queryMemory: () => Promise<Array<Record<string, unknown>>>;
+
   constructor(
     ws: WebSocket,
     sessionId: string,
     runPipeline: PipelineRunner,
+    queryMemory: () => Promise<Array<Record<string, unknown>>>,
   ) {
     this.ws = ws;
     this.sessionId = sessionId;
     this.runPipeline = runPipeline;
+    this.queryMemory = queryMemory;
   }
 
   /**
@@ -144,6 +150,8 @@ export class WsRelay {
       this._handleChat(parsed);
     } else if (parsed.type === 'stop') {
       this._handleStop();
+    } else if (parsed.type === 'memory_query') {
+      this._handleMemoryQuery();
     } else {
       this._send({ type: 'error', message: `Unknown message type: ${(parsed as { type: string }).type}` });
     }
@@ -199,6 +207,20 @@ export class WsRelay {
       }
     } finally {
       this.abortController = null;
+    }
+  }
+
+  /** 处理 memory_query 消息 — 返回所有记忆数据 */
+  private async _handleMemoryQuery(): Promise<void> {
+    try {
+      const entries = await this.queryMemory();
+      this._send({
+        type: 'memory_data' as any,
+        entries,
+        total: entries.length,
+      });
+    } catch (err) {
+      this._send({ type: 'error', message: `查询记忆失败: ${err}` });
     }
   }
 

@@ -783,6 +783,20 @@ function handleWsConnection(ws: WebSocket): void {
   //   4. 调用 runAgentPipeline 执行管线（传入共享的 bus）
   const relay = new WsRelay(ws, sessionId, async (query, imagePath, voicePath, events, signal) => {
     return runAgentPipeline(query, imagePath, voicePath, 180, events, signal, bus);
+  }, async () => {
+    // 查询 MemoryStore 中的所有记忆
+    const store = new MemoryStore();
+    store.load();
+    return store.get_all().map((e) => ({
+      id: e.id,
+      content: e.content,
+      category: e.category,
+      category_label: e.category_label,
+      confidence: e.confidence,
+      keywords: e.keywords,
+      importance: e.importance,
+      created_at: e.created_at,
+    }));
   });
 
   // 启动中继器（异步，不阻塞）
