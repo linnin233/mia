@@ -1,7 +1,28 @@
+# Runtime artifacts
 logs/
 *.log
-__pycache__/
-*.pyc
-.env
 data/
 workspace/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment secrets
+.env
+
+# Python (legacy, will be removed on js branch)
+__pycache__/
+*.pyc
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
