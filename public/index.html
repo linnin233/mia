@@ -222,7 +222,10 @@
     }
     .section-header:hover { color: var(--text); }
     .section-header .toggle { font-size: 10px; transition: transform 0.2s; }
-    .section-header.collapsed .toggle { transform: rotate(-90deg); }
+    
+    /* 折叠状态 — 用 CSS class 控制，不用 JS inline style */
+    .side-section.collapsed .section-body { display: none; }
+    .side-section.collapsed .toggle { transform: rotate(-90deg); }
     
     .section-body {
       flex: 1;
@@ -760,10 +763,11 @@
     }
 
     function toggleSection(header) {
-      header.classList.toggle('collapsed');
-      const body = header.nextElementSibling;
-      if (body) {
-        body.style.display = header.classList.contains('collapsed') ? 'none' : '';
+      // 切换父容器 .side-section 上的 collapsed class
+      // CSS 规则会自动隐藏 .section-body 并旋转箭头
+      const section = header.closest('.side-section');
+      if (section) {
+        section.classList.toggle('collapsed');
       }
     }
 
