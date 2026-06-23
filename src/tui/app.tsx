@@ -1,11 +1,13 @@
 /**
- * MIA Ink TUI — 主 App 组件
+ * MIA Ink TUI — 主 App 组件（重构版）
  *
- * 多面板分屏布局:
- *   Header → [ChatPanel | SidePanel(Thinking/Tools/Memory)] → InputBar
+ * 修复:
+ *   1. Agent 输出通过 bridge → dispatch → Ink 渲染（不再冲破布局）
+ *   2. 本地命令 (/help /memory /clear /quit) 在 TUI 内拦截
+ *   3. Static key 警告已修复
  */
 
-import React, { useReducer, useCallback, useEffect, useState } from 'react';
+import React, { useReducer, useCallback, useEffect, useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Header } from './components/Header.js';
 import { ChatPanel } from './components/ChatPanel.js';
@@ -13,109 +15,176 @@ import { ThinkingPanel } from './components/ThinkingPanel.js';
 import { ToolsPanel } from './components/ToolsPanel.js';
 import { MemoryPanel } from './components/MemoryPanel.js';
 import { InputBar } from './components/InputBar.js';
-import { useMessageBus } from './hooks/useMessageBus.js';
 import { tuiReducer, createInitialState } from './store.js';
-import type { MessageBus } from '../bus/bus.js';
 import type { MemoryAgent } from '../agents/memory.js';
-import type { ChatMessage, MemoryEntry } from './types.js';
+import type { MemoryEntry } from './types.js';
+
+// ─── Bridge 接口 ────────────────────────────────────────
+
+export interface TuiBridge {
+  onUserMessage: (text: string) => void;
+  onStreamStart: () => void;
+  onStreamChunk: (delta: string) => void;
+  onStreamEnd: (fullText: string) => void;
+  onSendText: (text: string) => void;
+  onThought: (agent: string, title: string, detail: string) => void;
+}
 
 // ─── Props ──────────────────────────────────────────────
 
 interface AppProps {
-  bus: MessageBus;
   memoryAgent: MemoryAgent | null;
+  bridge: TuiBridge;
   onSubmit: (text: string) => void;
   onQuit: () => void;
-  initialMessages?: ChatMessage[];
-  initialMemories?: MemoryEntry[];
 }
+
+// ─── 本地帮助文本 ───────────────────────────────────────
+
+const HELP_TEXT = `MIA TUI 命令:
+  /help, /h     — 显示此帮助
+  /quit, /q     — 退出
+  /memory       — 全屏记忆浏览器
+  /clear        — 清空对话
+  /thinking     — 切换思考面板
+  /tools        — 切换工具面板
+  /verbose      — 切换详细输出
+
+快捷键:
+  Tab           — 切换右侧面板焦点
+  1/2/3         — 折叠 Thinking/Tools/Memory 面板
+  Esc           — 从全屏模式返回
+  Ctrl+C        — 退出`;
+
+/** 本地命令列表（不发送给 Agent） */
+const LOCAL_COMMANDS = new Set([
+  '/help', '/h', '/quit', '/q', '/memory', '/clear',
+  '/thinking', '/tools', '/verbose',
+]);
 
 // ─── App 组件 ───────────────────────────────────────────
 
 export const App: React.FC<AppProps> = ({
-  bus,
   memoryAgent,
+  bridge,
   onSubmit,
   onQuit,
-  initialMessages = [],
-  initialMemories = [],
 }) => {
-  const [state, dispatch] = useReducer(tuiReducer, {
-    ...createInitialState(),
-    messages: initialMessages,
-    memories: initialMemories,
-  });
+  const [state, dispatch] = useReducer(tuiReducer, createInitialState());
+  const bridgeRef = useRef(bridge);
+  bridgeRef.current = bridge;
 
-  const [panelIndex, setPanelIndex] = useState(0);
-
-  // 订阅 MessageBus
-  useMessageBus(bus, dispatch, true);
-
-  // 快捷键
-  useInput((input, key) => {
-    if (key.escape) {
-      // Esc: 返回聊天模式
-      dispatch({ type: 'SET_FULLSCREEN', mode: 'chat' });
-      return;
-    }
-
-    if (key.ctrl && input === 'c') {
-      onQuit();
-      return;
-    }
-
-    // Tab: 切换右侧面板焦点
-    if (key.tab) {
-      setPanelIndex((prev) => (prev + 1) % 3);
-      return;
-    }
-
-    // 1/2/3: 切换面板折叠
-    if (input === '1') {
-      dispatch({ type: 'TOGGLE_PANEL', panel: 'thinking' });
-    } else if (input === '2') {
-      dispatch({ type: 'TOGGLE_PANEL', panel: 'tools' });
-    } else if (input === '3') {
-      dispatch({ type: 'TOGGLE_PANEL', panel: 'memory' });
-    }
-  });
-
-  // 处理用户输入提交
-  const handleSubmit = useCallback(
-    (text: string) => {
-      if (text.startsWith('/')) {
-        // 本地命令
-        if (text === '/quit' || text === '/q') {
-          onQuit();
-          return;
-        }
-        if (text === '/memory') {
-          dispatch({ type: 'SET_FULLSCREEN', mode: 'memory' });
-          return;
-        }
-        if (text === '/clear') {
-          dispatch({ type: 'CLEAR_CHAT' });
-          return;
-        }
-        // Toggle 面板
-        if (text === '/thinking') {
-          dispatch({ type: 'TOGGLE_PANEL', panel: 'thinking' });
-          return;
-        }
-        if (text === '/tools') {
-          dispatch({ type: 'TOGGLE_PANEL', panel: 'tools' });
-          return;
-        }
-      }
-
-      // 添加用户消息到本地状态
+  // ─── 连接 Bridge → dispatch ──────────────────────
+  useEffect(() => {
+    const b = bridgeRef.current;
+    b.onUserMessage = (text: string) => {
       dispatch({
         type: 'ADD_USER_MESSAGE',
         content: text,
         id: Date.now().toString(16),
       });
+    };
+    b.onStreamStart = () => {
+      dispatch({ type: 'SET_STREAMING', text: '' });
+    };
+    b.onStreamChunk = (delta: string) => {
+      dispatch({ type: 'APPEND_STREAMING', delta });
+    };
+    b.onStreamEnd = (fullText: string) => {
+      dispatch({ type: 'FINISH_STREAMING', content: fullText });
+    };
+    b.onSendText = (text: string) => {
+      dispatch({ type: 'FINISH_STREAMING', content: text });
+    };
+    b.onThought = (agent: string, title: string, detail: string) => {
+      dispatch({
+        type: 'ADD_THOUGHT',
+        entry: {
+          id: Date.now().toString(16),
+          agent,
+          title,
+          detail,
+          timestamp: Date.now(),
+        },
+      });
+    };
+  }, []);
 
-      // 通知外层处理
+  // ─── 快捷键 ─────────────────────────────────────
+  useInput((input, key) => {
+    if (key.escape) {
+      dispatch({ type: 'SET_FULLSCREEN', mode: 'chat' });
+      return;
+    }
+    if (key.ctrl && input === 'c') {
+      onQuit();
+      return;
+    }
+    if (key.tab) {
+      // Toggle panel cycle
+      const panels: Array<'thinking' | 'tools' | 'memory'> = ['thinking', 'tools', 'memory'];
+      const current = panels.find(
+        (p) => !state.panels[p],
+      ) || 'thinking';
+      dispatch({ type: 'TOGGLE_PANEL', panel: current });
+      return;
+    }
+    if (input === '1') dispatch({ type: 'TOGGLE_PANEL', panel: 'thinking' });
+    if (input === '2') dispatch({ type: 'TOGGLE_PANEL', panel: 'tools' });
+    if (input === '3') dispatch({ type: 'TOGGLE_PANEL', panel: 'memory' });
+  });
+
+  // ─── 输入处理 ───────────────────────────────────
+  const handleSubmit = useCallback(
+    (text: string) => {
+      if (LOCAL_COMMANDS.has(text)) {
+        switch (text) {
+          case '/help':
+          case '/h':
+            // 直接显示帮助文本作为系统消息
+            dispatch({
+              type: 'ADD_USER_MESSAGE',
+              content: text,
+              id: Date.now().toString(16),
+            });
+            dispatch({
+              type: 'FINISH_STREAMING',
+              content: HELP_TEXT,
+            });
+            return;
+
+          case '/quit':
+          case '/q':
+            onQuit();
+            return;
+
+          case '/memory':
+            dispatch({ type: 'SET_FULLSCREEN', mode: 'memory' });
+            return;
+
+          case '/clear':
+            dispatch({ type: 'CLEAR_CHAT' });
+            return;
+
+          case '/thinking':
+            dispatch({ type: 'TOGGLE_PANEL', panel: 'thinking' });
+            return;
+
+          case '/tools':
+            dispatch({ type: 'TOGGLE_PANEL', panel: 'tools' });
+            return;
+
+          case '/verbose':
+            // Toggle verbose mode via config
+            dispatch({
+              type: 'FINISH_STREAMING',
+              content: 'Verbose 模式通过 /verbose 切换（功能开发中）',
+            });
+            return;
+        }
+      }
+
+      // 其他输入 → 转发给 Agent 管道
       onSubmit(text);
     },
     [onSubmit, onQuit],
@@ -131,7 +200,7 @@ export const App: React.FC<AppProps> = ({
     );
   }
 
-  // ─── 聊天模式 (默认) ──────────────────────────
+  // ─── 聊天模式 ──────────────────────────────────
   return (
     <Box flexDirection="column" width="100%" height="100%">
       <Header
@@ -146,17 +215,15 @@ export const App: React.FC<AppProps> = ({
           messages={state.messages}
           streamingText={state.streamingText}
           isProcessing={state.isProcessing}
-          width={60}
-          height={1}
         />
 
         {/* 右侧信息面板 */}
         <Box
           flexDirection="column"
           flexGrow={2}
-          paddingLeft={1}
-          borderStyle={panelIndex === 0 ? 'bold' : undefined}
-          borderColor={panelIndex === 0 ? 'cyan' : undefined}
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
         >
           <ThinkingPanel
             thoughts={state.thoughts}
@@ -176,15 +243,11 @@ export const App: React.FC<AppProps> = ({
       {/* 快捷键提示 */}
       <Box paddingX={1}>
         <Text dimColor>
-          Tab切换面板 | 1/2/3折叠 | /memory记忆 | /clear清屏 | Esc返回 |
-          Ctrl+C退出
+          Tab切换 | 1/2/3折叠面板 | /help帮助 | /memory记忆 | /clear清屏 | Esc返回 | Ctrl+C退出
         </Text>
       </Box>
 
-      <InputBar
-        onSubmit={handleSubmit}
-        isProcessing={state.isProcessing}
-      />
+      <InputBar onSubmit={handleSubmit} isProcessing={state.isProcessing} />
     </Box>
   );
 };
@@ -204,19 +267,13 @@ const MemoryFullScreen: React.FC<MemoryFullScreenProps> = ({
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 10;
 
-  // 加载记忆
   useEffect(() => {
     if (!memoryAgent) return;
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = (memoryAgent as any).store;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const working = (memoryAgent as any)._workingMemory || [];
-
-    const all = [
-      ...store.get_all(),
-      ...working,
-    ].map(
+    const all = [...store.get_all(), ...working].map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (e: any) => ({
         id: e.id,
@@ -227,7 +284,6 @@ const MemoryFullScreen: React.FC<MemoryFullScreenProps> = ({
         categoryLabel: e.category_label || e.category,
       }),
     ) as MemoryEntry[];
-
     setEntries(all);
   }, [memoryAgent]);
 

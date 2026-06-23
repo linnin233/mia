@@ -10,8 +10,6 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   streamingText: string;
   isProcessing: boolean;
-  width: number;
-  height: number;
 }
 
 /** 格式化时间戳 */
@@ -30,7 +28,7 @@ const MessageItem: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
   const time = formatTime(msg.timestamp);
 
   return (
-    <Box flexDirection="column" marginY={1}>
+    <Box key={msg.id} flexDirection="column" marginY={1}>
       <Box>
         <Text color={color} bold>
           {label} {'> '}
@@ -48,23 +46,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   messages,
   streamingText,
   isProcessing,
-  width,
-  height,
 }) => {
-  // 历史消息（不参与重渲染）
-  const historyItems = messages.slice(-50); // 保留最近 50 条
+  // 历史消息（最近 50 条）
+  const historyItems = messages.slice(-50);
 
+  // Static 需要每个 item 有唯一的 key
   const staticItems = historyItems.map((msg) => ({
     key: msg.id,
-    element: <MessageItem msg={msg} />,
+    element: React.createElement(MessageItem, { msg, key: msg.id }),
   }));
 
   return (
     <Box
       flexDirection="column"
       flexGrow={3}
-      width={width}
-      height={height}
       borderStyle="round"
       borderColor="gray"
       paddingX={1}
@@ -76,7 +71,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       {/* 流式输出 */}
       {streamingText && (
-        <Box flexDirection="column" marginY={1}>
+        <Box flexDirection="column" marginY={1} key="streaming">
           <Box>
             <Text color="cyan" bold>
               MIA {'> '}
@@ -91,16 +86,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       {/* 等待中 */}
       {isProcessing && !streamingText && (
-        <Box marginY={1}>
+        <Box marginY={1} key="waiting">
           <Text color="yellow">MIA 思考中...</Text>
         </Box>
       )}
 
       {/* 空状态 */}
       {messages.length === 0 && !isProcessing && (
-        <Box flexDirection="column" marginY={1}>
+        <Box flexDirection="column" marginY={1} key="empty">
           <Text dimColor>欢迎使用 MIA Ink TUI!</Text>
-          <Text dimColor>输入消息开始对话，/help 查看命令。</Text>
+          <Text dimColor>/help 查看命令，直接输入开始对话。</Text>
         </Box>
       )}
     </Box>
