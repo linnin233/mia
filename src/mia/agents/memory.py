@@ -381,16 +381,26 @@ class MemoryAgent(BaseAgent):
         self._pending_session_id = session_id
         self._pending_original = original
 
-        # ─── 会话自动切换 (WeChat ↔ CLI 交叉) ──────
+        # ─── 会话自动切换 (渠道交叉: WeChat ↔ Telegram ↔ CLI) ──────
         if self._session_manager and session_id and session_id != self._session_manager.get_current_session_id():
-            # 保存当前会话状态再切换
             await self.save_state()
-            # 注册新会话（WeChat 消息首次到达时自动创建会话记录）
+            # 从 session_id 前缀自动推断渠道来源
             if ":" in session_id:
-                self._session_manager.get_or_create_for_id(session_id, source="wechat")
+                prefix = session_id.split(":")[0]
+                source_map = {"wechat": "wechat", "telegram": "telegram"}
+                source = source_map.get(prefix, "wechat")
+                self._session_manager.get_or_create_for_id(session_id, source=source)
             # 加载目标会话状态
             await self.load_state(session_id)
             self._session_manager.set_current(session_id)
+            # 可见反馈
+            info = self._session_manager.get_session(session_id)
+            name = info.name if info else session_id
+            print(
+                f"\033[34m[MemoryAgent]\033[0m "
+                f"会话切换 → \033[36m{name}\033[0m"
+                f"\033[90m ({len(self._conversation_history)}轮历史)\033[0m"
+            )
 
         # ─── 检测换日 ──────────────────────────────
         today = _today_str()

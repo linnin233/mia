@@ -422,10 +422,14 @@ class SessionManager:
             return existing
 
         # 自动生成名称
-        if source == "wechat" and ":" in session_id:
-            # 从 "wechat:wx_user_123" 提取用户标识
+        if ":" in session_id:
             user_part = session_id.split(":", 1)[1] if ":" in session_id else session_id
-            name = f"微信 {user_part[:12]}"
+            if source == "wechat":
+                name = f"微信 {user_part[:12]}"
+            elif source == "telegram":
+                name = f"纸飞机 {user_part[:12]}"
+            else:
+                name = f"{source} {user_part[:12]}"
         else:
             name = f"{source}_{session_id[:8]}"
 
