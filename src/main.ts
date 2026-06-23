@@ -15,7 +15,12 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
+import http from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { MessageBus } from './bus/bus.js';
 import {
   MessageType,
@@ -36,6 +41,8 @@ import {
   handleAgentCommand,
   handleChannelCommand,
 } from './cli/commands.js';
+import type { PipelineEventCallbacks } from './server/ws-relay.js';
+import { WsRelay } from './server/ws-relay.js';
 
 // ─── 类型定义 ────────────────────────────────────────────
 
@@ -214,6 +221,13 @@ function printBanner(config: Config, enableWechat: boolean): void {
 /**
  * 运行完整的 Agent 链路（单次对话）
  *
+ * @param query - 用户输入文本
+ * @param imagePath - 可选图片路径
+ * @param voicePath - 可选语音路径
+ * @param timeoutSec - 超时秒数
+ * @param events - 可选事件回调（用于 WebSocket/TUI 实时推送）
+ * @param signal - 可选 AbortSignal（用于外部中止管线）
+ * @param externalBus - 可选外部 MessageBus（用于 WebSocket 共享总线）
  * @returns 最终回复文本
  */
 async function runAgentPipeline(
@@ -221,14 +235,37 @@ async function runAgentPipeline(
   imagePath?: string,
   voicePath?: string,
   timeoutSec = 180,
+  events?: PipelineEventCallbacks,
+  signal?: AbortSignal,
+  externalBus?: MessageBus,
 ): Promise<string | null> {
   const config = getConfig();
   const providers = createProviders(config);
   const sessionId = crypto.randomBytes(6).toString('hex');
-  const bus = new MessageBus(100);
+
+  // 使用外部传入的 bus 或创建新的
+  const bus = externalBus || new MessageBus(100);
+  const ownBus = !externalBus; // 标记是否自己拥有 bus（需要 stop）
 
   await bus.start();
   setupMirrors(bus);
+
+  // ─── 事件回调镜像 ──────────────────────────────
+  // 如果提供了 events 回调，将相关消息类型镜像投递到 main 队列，
+  // 这样主循环可以同时处理 CONVERSATION_DONE 和其他实时事件
+  if (events) {
+    const eventMirrorTypes = [
+      MessageType.STREAM_START,
+      MessageType.STREAM_CHUNK,
+      MessageType.STREAM_END,
+      MessageType.EXECUTE_TASK,
+      MessageType.TASK_RESULT,
+      MessageType.TASK_ERROR,
+    ];
+    for (const mt of eventMirrorTypes) {
+      bus.subscribeMirror(mt, 'main');
+    }
+  }
 
   // 创建 Agent
   const agents = createAgents(bus, providers, config);
@@ -253,35 +290,93 @@ async function runAgentPipeline(
     if (voicePath) rawMsg.payload['voice'] = voicePath;
     await bus.publish(rawMsg);
 
-    console.log(`\x1b[36m[Main]\x1b[0m 用户输入已注入: ${query.slice(0, 100)}`);
+    if (!events) {
+      console.log(`\x1b[36m[Main]\x1b[0m 用户输入已注入: ${query.slice(0, 100)}`);
+    }
 
     // 等待 CONVERSATION_DONE
     await bus.subscribe('main');
     const deadline = Date.now() + timeoutSec * 1000;
 
     while (Date.now() < deadline) {
+      // 检查外部中止信号
+      if (signal?.aborted) {
+        console.log(`\x1b[33m[Main]\x1b[0m 管线被外部中止`);
+        break;
+      }
+
       const msg = await bus.receive('main', 1000);
       if (!msg) continue;
 
+      // ─── 处理事件回调 ──────────────────────────
+      if (events) {
+        switch (msg.msg_type) {
+          case MessageType.STREAM_START:
+            events.onStreamStart?.();
+            break;
+          case MessageType.STREAM_CHUNK:
+            events.onStreamChunk?.((msg.payload['delta'] as string) || '');
+            break;
+          case MessageType.STREAM_END:
+            events.onStreamEnd?.((msg.payload['message'] as string) || '');
+            break;
+          case MessageType.EXECUTE_TASK:
+            events.onTool?.(
+              'task',
+              'running',
+              (msg.payload['task'] as string) || '',
+              '',
+            );
+            break;
+          case MessageType.TASK_RESULT:
+            events.onTool?.(
+              'task',
+              'success',
+              '',
+              (msg.payload['result'] as string)?.slice(0, 500) || '',
+            );
+            break;
+          case MessageType.TASK_ERROR:
+            events.onTool?.(
+              'task',
+              'error',
+              '',
+              (msg.payload['error'] as string) || 'Unknown error',
+            );
+            break;
+        }
+      }
+
       if (msg.msg_type === MessageType.CONVERSATION_DONE) {
         finalResponse = (msg.payload['message'] as string) || '';
+        events?.onDone?.();
         break;
       }
 
       if (msg.msg_type === MessageType.TASK_ERROR) {
-        console.log(
-          `\x1b[31m[Main] 检测到 TASK_ERROR: ${msg.payload['error']}\x1b[0m`,
-        );
+        if (!events) {
+          console.log(
+            `\x1b[31m[Main] 检测到 TASK_ERROR: ${msg.payload['error']}\x1b[0m`,
+          );
+        } else {
+          events.onError?.((msg.payload['error'] as string) || 'Task error');
+        }
       }
     }
 
     if (finalResponse === null) {
-      console.log(`\n\x1b[31m[Main] 超时 (${timeoutSec}s)，未收到回复\x1b[0m`);
+      if (!events) {
+        console.log(`\n\x1b[31m[Main] 超时 (${timeoutSec}s)，未收到回复\x1b[0m`);
+      } else {
+        events.onError?.('处理超时，未收到回复');
+      }
     }
   } finally {
-    // 清理
+    // 清理 — 只有自己创建的 bus 才 stop
     await stopAllAgents(allAgents);
-    await bus.stop();
+    if (ownBus) {
+      await bus.stop();
+    }
   }
 
   return finalResponse;
@@ -504,10 +599,41 @@ async function runServer(port: number): Promise<void> {
   try {
     const { default: Fastify } = await import('fastify');
 
+    // ─── 创建共享 HTTP Server ───────────────────────
+    // 先创建原生 HTTP server，让 Fastify 和 ws 共享同一个 server
+    const httpServer = http.createServer();
+
     const app = Fastify({
-      logger: false, // pino 日志在后台，不干扰终端
+      logger: false,
+      // 使用 serverFactory 让 Fastify 使用我们预先创建的 HTTP server
+      serverFactory: (handler) => {
+        httpServer.on('request', handler);
+        return httpServer;
+      },
     });
 
+    // ─── WebSocket Server ──────────────────────────
+    const wss = new WebSocketServer({
+      server: httpServer,
+      path: '/ws',
+    });
+
+    // ─── 静态文件: GET / (index.html) ──────────────
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const publicDir = path.resolve(__dirname, '..', 'public');
+    const indexPath = path.join(publicDir, 'index.html');
+
+    app.get('/', async (_request, reply) => {
+      try {
+        const html = fs.readFileSync(indexPath, 'utf-8');
+        return reply.type('text/html; charset=utf-8').send(html);
+      } catch {
+        return reply.status(404).send('index.html not found');
+      }
+    });
+
+    // ─── API 端点 ──────────────────────────────────
     // GET /health
     app.get('/health', async () => ({
       status: 'ok',
@@ -540,16 +666,68 @@ async function runServer(port: number): Promise<void> {
       return { response: result };
     });
 
-    console.log(`  MIA HTTP API 已启动: http://127.0.0.1:${port}`);
-    console.log(`  API 端点: GET /health, POST /chat`);
-
+    // ─── 启动服务器 ────────────────────────────────
     await app.listen({ port, host: '127.0.0.1' });
-    console.log(`  HTTP 服务器已关闭`);
+
+    console.log(`  ╔══════════════════════════════════════════╗`);
+    console.log(`  ║  MIA Server v0.2.0                       ║`);
+    console.log(`  ║  HTTP API:  http://127.0.0.1:${port}          ║`);
+    console.log(`  ║  WebSocket: ws://127.0.0.1:${port}/ws        ║`);
+    console.log(`  ║  Web GUI:   http://127.0.0.1:${port}          ║`);
+    console.log(`  ╚══════════════════════════════════════════╝`);
+
+    // ─── WebSocket 连接处理 ────────────────────────
+    wss.on('connection', (ws: WebSocket) => {
+      handleWsConnection(ws);
+    });
+
+    console.log(`  MIA HTTP API 已启动: http://127.0.0.1:${port}`);
+    console.log(`  API 端点: GET /health, POST /chat, WS /ws`);
   } catch (err) {
     console.error('Fastify 启动失败:', err);
     console.error('请确保已安装 fastify: npm install fastify');
     process.exit(1);
   }
+}
+
+/**
+ * 处理 WebSocket 连接 — 为每个客户端创建独立的中继器
+ *
+ * 每个浏览器 tab 对应一个 WebSocket 连接，
+ * 拥有独立的 MessageBus 订阅和 Agent 管线会话。
+ */
+function handleWsConnection(ws: WebSocket): void {
+  const sessionId = `ws_${crypto.randomBytes(6).toString('hex')}`;
+
+  console.log(`[WS] 新连接: ${sessionId}`);
+
+  // 为每个连接创建独立的 MessageBus（WsRelay 和 pipeline 共享）
+  const bus = new MessageBus(100);
+
+  // 创建 WsRelay — 它将:
+  //   1. 订阅 MessageBus 的 Agent 事件
+  //   2. 转发到 WebSocket 客户端
+  //   3. 接收客户端 chat/stop 消息
+  //   4. 调用 runAgentPipeline 执行管线（传入共享的 bus）
+  const relay = new WsRelay(ws, sessionId, async (query, imagePath, voicePath, events, signal) => {
+    return runAgentPipeline(query, imagePath, voicePath, 180, events, signal, bus);
+  });
+
+  // 启动中继器（异步，不阻塞）
+  relay.start().catch((err) => {
+    console.error(`[WS] 中继器启动失败 (${sessionId}):`, err);
+  });
+
+  // 断线时清理
+  ws.on('close', () => {
+    console.log(`[WS] 连接断开: ${sessionId}`);
+    // 清理共享的 bus
+    bus.stop().catch(() => {});
+  });
+
+  ws.on('error', (err: Error) => {
+    console.error(`[WS] 错误 (${sessionId}):`, err.message);
+  });
 }
 
 // ─── 主入口 ──────────────────────────────────────────────
