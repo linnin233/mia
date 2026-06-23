@@ -565,6 +565,7 @@ class SchedulerAgent(BaseAgent):
 
         # 4. 通知输出目标流结束 (携带完整文本供 MemoryAgent 存储)
         target = self._resolve_output_target()
+        print(f"\033[36m[Scheduler]\033[0m 流式完成: target={target} len={len(full_text)} chat_id={meta.get('chat_id','N/A')}")
         await self.bus.publish(make_stream_end(
             full_message=full_text,
             session_id=self._session_id,

@@ -194,13 +194,13 @@ class TelegramSenderAgent(BaseAgent):
 
     def _handle_stream_chunk(self, msg: Message) -> None:
         """流式块 — 追加到缓冲（不立即发送，等 END 时一次性发送）"""
-        chunk = msg.payload.get("text", "")
+        chunk = msg.payload.get("delta", "")
         self._stream_buffer += chunk
 
     async def _handle_stream_end(self, msg: Message) -> None:
         """流式结束 — 发送完整文本到 Telegram"""
         chat_id = self._stream_chat_id or self._get_chat_id(msg)
-        full_text = self._stream_buffer or msg.payload.get("text", "")
+        full_text = self._stream_buffer or msg.payload.get("message", "")
         print(f"\033[34m[TelegramSender]\033[0m STREAM_END: chat={chat_id} text_len={len(full_text)} client={'OK' if self._client else 'NONE'}")
 
         if chat_id and full_text:

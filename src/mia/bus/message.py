@@ -349,6 +349,8 @@ def make_stream_chunk(
     target: str = "sender",
     context_token: str = "",
     to_user_id: str = "",
+    chat_id: str = "",
+    **channel_meta,
 ) -> Message:
     """构建 STREAM_CHUNK 消息"""
     payload: dict = {"delta": delta}
@@ -356,6 +358,9 @@ def make_stream_chunk(
         payload["context_token"] = context_token
     if to_user_id:
         payload["to_user_id"] = to_user_id
+    if chat_id:
+        payload["chat_id"] = chat_id
+    payload.update(channel_meta)
     return Message(
         msg_type=MessageType.STREAM_CHUNK,
         source="scheduler",
@@ -371,6 +376,8 @@ def make_stream_end(
     target: str = "sender",
     context_token: str = "",
     to_user_id: str = "",
+    chat_id: str = "",
+    **channel_meta,
 ) -> Message:
     """构建 STREAM_END 消息"""
     payload: dict = {"message": full_message}
@@ -378,6 +385,9 @@ def make_stream_end(
         payload["context_token"] = context_token
     if to_user_id:
         payload["to_user_id"] = to_user_id
+    if chat_id:
+        payload["chat_id"] = chat_id
+    payload.update(channel_meta)
     return Message(
         msg_type=MessageType.STREAM_END,
         source="scheduler",
