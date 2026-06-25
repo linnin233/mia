@@ -1212,18 +1212,27 @@ async def run_server(port: int) -> None:
         empty = {"name": name, "has_token": False, "enabled": False, "token_file": "", "token_masked": "", "file_size": 0, "file_mtime": ""}
         if name == "wechat":
             token_file = Path.home() / ".mia" / "wechat_bot_token"
+            ctx_file = Path.home() / ".mia" / "wechat_context_tokens.json"
             enabled = rt.wechat_enabled
             cfg_token = config.wechat.bot_token
+            login_method = "QR code scan (WeChat)"
+            base_url = config.wechat.base_url
         elif name == "telegram":
             token_file = Path.home() / ".mia" / "telegram_bot_token"
+            ctx_file = None
             enabled = rt.telegram_enabled
             cfg_token = config.telegram.bot_token
+            login_method = "Bot Token (from @BotFather)"
+            base_url = "https://api.telegram.org"
         else:
             return JSONResponse(status_code=404, content={"error": f"未知接口: {name}"})
 
         has_token = token_file.exists() or bool(cfg_token)
-        result = {"name": name, "has_token": has_token, "enabled": enabled, "token_file": str(token_file)}
-        # Token 掩码（只显示前4后4）
+        result = {
+            "name": name, "has_token": has_token, "enabled": enabled,
+            "token_file": str(token_file), "login_method": login_method,
+            "base_url": base_url,
+        }
         token_raw = ""
         if token_file.exists():
             try:
@@ -1240,6 +1249,18 @@ async def run_server(port: int) -> None:
                 result["token_masked"] = token_raw[:4] + "****" + token_raw[-4:]
             else:
                 result["token_masked"] = "*" * len(token_raw)
+        # WeChat: context tokens 信息
+        if name == "wechat" and ctx_file and ctx_file.exists():
+            try:
+                ctx_stat = ctx_file.stat()
+                ctx_data = json.loads(ctx_file.read_text(encoding="utf-8"))
+                user_count = len(ctx_data) if isinstance(ctx_data, dict) else 0
+                result["ctx_file"] = str(ctx_file)
+                result["ctx_user_count"] = user_count
+                result["ctx_file_size"] = ctx_stat.st_size
+                result["ctx_file_mtime"] = datetime.fromtimestamp(ctx_stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
         return result
 
     @app.put("/api/interface/{name}/token")
