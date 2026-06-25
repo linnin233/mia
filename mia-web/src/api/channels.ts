@@ -24,3 +24,7 @@ export async function getInterfaceDetail(name: string): Promise<InterfaceDetail>
   const { data } = await client.get(`/interface/${name}`)
   return data
 }
+
+export async function updateInterfaceToken(name: string, token: string): Promise<void> {
+  await client.put(`/interface/${name}/token`, { token })
+}

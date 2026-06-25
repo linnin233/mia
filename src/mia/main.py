@@ -1194,6 +1194,27 @@ async def run_server(port: int) -> None:
                 result["token_masked"] = "*" * len(token_raw)
         return result
 
+    @app.put("/api/interface/{name}/token")
+    async def update_interface_token(name: str, data: dict):
+        new_token = data.get("token", "").strip()
+        if not new_token:
+            return JSONResponse(status_code=400, content={"error": "token 不能为空"})
+        if name == "wechat":
+            token_file = Path.home() / ".mia" / "wechat_bot_token"
+            config.wechat.bot_token = new_token
+        elif name == "telegram":
+            token_file = Path.home() / ".mia" / "telegram_bot_token"
+            config.telegram.bot_token = new_token
+        else:
+            return JSONResponse(status_code=404, content={"error": f"未知接口: {name}"})
+        # 持久化到文件
+        try:
+            token_file.parent.mkdir(parents=True, exist_ok=True)
+            token_file.write_text(new_token, encoding="utf-8")
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"无法保存 token: {e}"})
+        return {"ok": True, "name": name}
+
     # ─── 对话 ────────────────────────────────────────
 
     @app.post("/api/chat")
