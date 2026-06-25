@@ -55,8 +55,8 @@ function sourceLabel(source: string): string {
 
 async function switchTo(id: string) {
   if (id !== sessionStore.currentId) {
-    chatStore.clearMessages()
     await sessionStore.activate(id)
+    await chatStore.loadHistory(id)
   }
 }
 </script>

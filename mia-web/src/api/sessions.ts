@@ -28,3 +28,8 @@ export async function getCurrentSession(): Promise<SessionInfo> {
   const { data } = await client.get('/sessions/current')
   return data
 }
+
+export async function getSessionHistory(sessionId: string): Promise<{ session_id: string; messages: { role: string; content: string }[] }> {
+  const { data } = await client.get(`/sessions/${sessionId}/history`)
+  return data
+}

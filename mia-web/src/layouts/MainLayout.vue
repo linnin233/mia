@@ -47,9 +47,12 @@ import { useSessionStore } from '@/stores/sessions'
 import { useChannelStore } from '@/stores/channels'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 
+import { useChatStore } from '@/stores/chat'
+
 const route = useRoute()
 const sessionStore = useSessionStore()
 const channelStore = useChannelStore()
+const chatStore = useChatStore()
 
 const selectedSession = ref('')
 
@@ -57,6 +60,10 @@ onMounted(async () => {
   await sessionStore.fetchSessions()
   await channelStore.fetchStatus()
   selectedSession.value = sessionStore.currentId || ''
+  // 加载当前会话历史消息
+  if (selectedSession.value) {
+    await chatStore.loadHistory(selectedSession.value)
+  }
 })
 
 watch(() => sessionStore.currentId, (id) => {
@@ -66,6 +73,7 @@ watch(() => sessionStore.currentId, (id) => {
 async function switchSession(id: string) {
   if (id && id !== sessionStore.currentId) {
     await sessionStore.activate(id)
+    await chatStore.loadHistory(id)
   }
 }
 </script>

@@ -1060,6 +1060,22 @@ async def run_server(port: int) -> None:
             return JSONResponse(status_code=404, content={"error": "无活跃会话"})
         return _session_to_dict(s)
 
+    @app.get("/api/sessions/{session_id}/history")
+    async def session_history(session_id: str):
+        state = session_manager.load_state(session_id)
+        if not state:
+            return {"session_id": session_id, "messages": []}
+        # 将 conversation_history 转为前端 ChatMessage 格式
+        messages = []
+        for turn in state.conversation_history:
+            user_text = turn.get("user", "")
+            assistant_text = turn.get("assistant", "")
+            if user_text:
+                messages.append({"role": "user", "content": user_text})
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
+        return {"session_id": session_id, "messages": messages}
+
     # ─── 渠道管理 ────────────────────────────────────
 
     @app.get("/api/channels")

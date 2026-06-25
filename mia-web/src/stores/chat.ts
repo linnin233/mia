@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { sendMessage } from '@/api/chat'
+import { getSessionHistory } from '@/api/sessions'
 import type { ChatMessage } from '@/types'
 
 export const useChatStore = defineStore('chat', () => {
@@ -31,9 +32,24 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function loadHistory(sessionId: string) {
+    messages.value = []
+    try {
+      const data = await getSessionHistory(sessionId)
+      for (const m of data.messages) {
+        messages.value.push({
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + messages.value.length,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          timestamp: Date.now(),
+        })
+      }
+    } catch {}
+  }
+
   function clearMessages() {
     messages.value = []
   }
 
-  return { messages, loading, streamingText, addMessage, send, clearMessages }
+  return { messages, loading, streamingText, addMessage, send, loadHistory, clearMessages }
 })
