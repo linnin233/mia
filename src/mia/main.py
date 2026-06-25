@@ -1121,6 +1121,54 @@ async def run_server(port: int) -> None:
             "streaming": config.agent.enable_streaming,
         }
 
+    # ─── 模型管理 ────────────────────────────────────
+
+    @app.get("/api/models")
+    async def list_models():
+        from mia.model_registry import MODEL_REGISTRY
+        result = []
+        for mid, info in MODEL_REGISTRY.items():
+            result.append({
+                "id": mid,
+                "provider": info.provider,
+                "desc": info.desc,
+                "capabilities": [c.value for c in info.capabilities],
+                "enabled": rt.model_enabled.get(mid, False),
+                "has_key": bool(rt.provider_api_keys.get(info.provider, "")),
+            })
+        return {"models": result}
+
+    @app.put("/api/models/{model_id}")
+    async def toggle_model(model_id: str, data: dict):
+        enabled = data.get("enabled", True)
+        rt.model_enabled[model_id] = enabled
+        return {"ok": True, "model_id": model_id, "enabled": enabled}
+
+    # ─── Agent 模型分配 ──────────────────────────────
+
+    @app.put("/api/agents/{agent_name}")
+    async def update_agent_config(agent_name: str, data: dict):
+        model = data.get("model")
+        fallback = data.get("fallback")
+        if agent_name == "scheduler":
+            if model: rt.scheduler_model = model
+            if fallback: rt.scheduler_fallback = fallback
+        elif agent_name == "task":
+            if model: rt.task_model = model
+            if fallback: rt.task_fallback = fallback
+        elif agent_name == "memory":
+            if model: rt.memory_model = model
+            if fallback: rt.memory_fallback = fallback
+        elif agent_name == "receiver":
+            if model: rt.receiver_text_model = model
+            if "vision_enabled" in data: rt.receiver_vision_enabled = data["vision_enabled"]
+            if "audio_enabled" in data: rt.receiver_audio_enabled = data["audio_enabled"]
+        elif agent_name == "sender":
+            if "tts_enabled" in data: rt.sender_tts_enabled = data["tts_enabled"]
+        else:
+            return JSONResponse(status_code=400, content={"error": f"未知 Agent: {agent_name}"})
+        return {"ok": True, "agent": agent_name}
+
     # ─── 记忆管理 ────────────────────────────────────
 
     @app.get("/api/memory")
