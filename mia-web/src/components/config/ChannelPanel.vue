@@ -15,7 +15,6 @@
           </div>
         </template>
         <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px">
-          <!-- Status tags -->
           <div>
             <el-tag :type="ch.hasToken ? 'success' : 'warning'" size="small">
               {{ ch.hasToken ? 'Token configured' : 'No token' }}
@@ -25,10 +24,10 @@
             </el-tag>
           </div>
 
-          <!-- Token editing -->
-          <div v-if="ch.editing">
+          <!-- Token editing: 直接绑定 editState 而非 computed 的 ch -->
+          <div v-if="editState[ch.key].editing">
             <el-input
-              v-model="ch.editToken"
+              v-model="editState[ch.key].editToken"
               type="password"
               show-password
               placeholder="Paste Bot Token here"
@@ -36,10 +35,10 @@
               style="margin-bottom: 6px"
             />
             <div style="display: flex; gap: 6px">
-              <el-button size="small" type="primary" :loading="ch.saving" @click="handleSaveToken(ch.key)">
+              <el-button size="small" type="primary" :loading="editState[ch.key].saving" @click="handleSaveToken(ch.key)">
                 Save
               </el-button>
-              <el-button size="small" @click="ch.editing = false; ch.editToken = ''">Cancel</el-button>
+              <el-button size="small" @click="cancelEdit(ch.key)">Cancel</el-button>
             </div>
           </div>
           <div v-else>
@@ -54,13 +53,12 @@
               </span>
             </div>
             <div style="margin-top: 4px">
-              <el-button size="small" @click="ch.editing = true">
+              <el-button size="small" @click="startEdit(ch.key)">
                 {{ ch.hasToken ? 'Update Token' : 'Set Token' }}
               </el-button>
             </div>
           </div>
 
-          <!-- File path -->
           <div style="font-size: 11px; color: #c0c4cc; word-break: break-all">
             {{ ch.detail?.token_file || ('~/.mia/' + ch.key + '_bot_token') }}
           </div>
@@ -81,7 +79,7 @@ const loading = ref(true)
 const toggling = ref<Record<string, boolean>>({})
 const details = ref<Record<string, any>>({})
 
-// Editable channel state
+// 直接 reactive，让 v-model 和 @click 能正确写回
 const editState = reactive<Record<string, { editing: boolean; editToken: string; saving: boolean }>>({
   wechat: { editing: false, editToken: '', saving: false },
   telegram: { editing: false, editToken: '', saving: false },
@@ -101,28 +99,32 @@ onMounted(async () => {
 
 const channelList = computed(() => [
   {
-    key: 'wechat',
+    key: 'wechat' as const,
     label: 'WeChat (iLink Bot)',
     enabled: channelStore.channels.wechat?.enabled ?? false,
     hasToken: channelStore.channels.wechat?.has_token ?? false,
     toggling: toggling.value['wechat'] ?? false,
     detail: details.value['wechat'],
-    editing: editState.wechat.editing,
-    editToken: editState.wechat.editToken,
-    saving: editState.wechat.saving,
   },
   {
-    key: 'telegram',
+    key: 'telegram' as const,
     label: 'Telegram (Bot API)',
     enabled: channelStore.channels.telegram?.enabled ?? false,
     hasToken: channelStore.channels.telegram?.has_token ?? false,
     toggling: toggling.value['telegram'] ?? false,
     detail: details.value['telegram'],
-    editing: editState.telegram.editing,
-    editToken: editState.telegram.editToken,
-    saving: editState.telegram.saving,
   },
 ])
+
+function startEdit(name: string) {
+  editState[name].editing = true
+  editState[name].editToken = ''
+}
+
+function cancelEdit(name: string) {
+  editState[name].editing = false
+  editState[name].editToken = ''
+}
 
 async function handleToggle(name: string, enabled: boolean) {
   toggling.value[name] = true
