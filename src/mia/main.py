@@ -17,6 +17,7 @@ MIA 主入口 — CLI 交互 + FastAPI HTTP 服务 (可选)
 
 import argparse
 import asyncio
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -951,11 +952,32 @@ async def run_cli_interactive() -> None:
         print("\033[90m已关闭。\033[0m")
 
 
+def _session_to_dict(s) -> dict:
+    """SessionInfo 转 dict（API 响应用）"""
+    return {
+        "session_id": s.session_id,
+        "name": s.name,
+        "source": s.source,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "turn_count": s.turn_count,
+        "is_active": s.is_active,
+    }
+
+
 async def run_server(port: int) -> None:
-    """HTTP API 服务模式"""
-    from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
+    """HTTP API 服务模式 — 完整 REST API + CORS"""
+    from fastapi import FastAPI, Query
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse, StreamingResponse
     import uvicorn
+
+    config = get_config()
+    config.runtime.load_runtime_state()
+    rt = config.runtime
+
+    session_manager = SessionManager()
+    session_manager.load_index()
 
     app = FastAPI(
         title="MIA — MiMo Intelligent Agent",
@@ -963,41 +985,220 @@ async def run_server(port: int) -> None:
         description="基于LLM循环的多Agent系统 HTTP API",
     )
 
+    # CORS — 允许前端跨域访问
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/health")
     async def health():
         return {"status": "ok", "version": "0.1.0"}
 
-    @app.post("/chat")
+    # ─── 会话管理 ────────────────────────────────────
+
+    @app.get("/api/sessions")
+    async def list_sessions():
+        sessions = session_manager.list_sessions()
+        return {
+            "sessions": [
+                {
+                    "session_id": s.session_id,
+                    "name": s.name,
+                    "source": s.source,
+                    "created_at": s.created_at,
+                    "updated_at": s.updated_at,
+                    "turn_count": s.turn_count,
+                    "is_active": s.is_active,
+                }
+                for s in sessions
+            ],
+            "current_id": session_manager.get_current_session_id(),
+        }
+
+    @app.post("/api/sessions")
+    async def create_session(data: dict):
+        name = data.get("name", "").strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "name 不能为空"})
+        if ":" in name:
+            return JSONResponse(status_code=400, content={"error": "名称不能包含冒号"})
+        s = session_manager.create_session(name, source="cli")
+        return _session_to_dict(s)
+
+    @app.put("/api/sessions/{session_id}")
+    async def rename_session(session_id: str, data: dict):
+        name = data.get("name", "").strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "name 不能为空"})
+        ok = session_manager.rename_session(session_id, name)
+        if not ok:
+            return JSONResponse(status_code=404, content={"error": "会话不存在"})
+        return {"ok": True}
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        ok = session_manager.delete_session(session_id)
+        if not ok:
+            return JSONResponse(status_code=400, content={"error": "删除失败"})
+        return {"ok": True}
+
+    @app.post("/api/sessions/{session_id}/activate")
+    async def activate_session(session_id: str):
+        s = session_manager.get_session(session_id)
+        if not s:
+            return JSONResponse(status_code=404, content={"error": "会话不存在"})
+        session_manager.set_current(session_id)
+        return _session_to_dict(s)
+
+    @app.get("/api/sessions/current")
+    async def current_session():
+        s = session_manager.get_current()
+        if not s:
+            return JSONResponse(status_code=404, content={"error": "无活跃会话"})
+        return _session_to_dict(s)
+
+    # ─── 渠道管理 ────────────────────────────────────
+
+    @app.get("/api/channels")
+    async def channel_status():
+        return {
+            "wechat": {
+                "enabled": rt.wechat_enabled,
+                "has_token": bool(config.wechat.bot_token),
+            },
+            "telegram": {
+                "enabled": rt.telegram_enabled,
+                "has_token": bool(config.telegram.bot_token),
+            },
+        }
+
+    @app.put("/api/channels/{name}")
+    async def toggle_channel(name: str, data: dict):
+        enabled = data.get("enabled", False)
+        if name == "wechat":
+            rt.wechat_enabled = enabled
+        elif name == "telegram":
+            rt.telegram_enabled = enabled
+        else:
+            return JSONResponse(status_code=400, content={"error": f"未知渠道: {name}"})
+        rt.save_runtime_state()
+        return {"ok": True, "name": name, "enabled": enabled}
+
+    # ─── 运行时配置 ──────────────────────────────────
+
+    @app.get("/api/config")
+    async def get_config_summary():
+        return {
+            "scheduler": {"model": rt.scheduler_model, "fallback": rt.scheduler_fallback},
+            "task": {"model": rt.task_model, "fallback": rt.task_fallback},
+            "memory": {"model": rt.memory_model, "fallback": rt.memory_fallback},
+            "receiver": {
+                "text_model": rt.receiver_text_model,
+                "vision_enabled": rt.receiver_vision_enabled,
+                "audio_enabled": rt.receiver_audio_enabled,
+            },
+            "sender": {"tts_enabled": rt.sender_tts_enabled, "tts_model": rt.sender_tts_model},
+            "streaming": config.agent.enable_streaming,
+        }
+
+    # ─── 记忆管理 ────────────────────────────────────
+
+    @app.get("/api/memory")
+    async def browse_memory(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+        store = MemoryStore()
+        store.load()
+        all_entries = store.get_all()
+        total = len(all_entries)
+        start = (page - 1) * page_size
+        end = start + page_size
+        entries = all_entries[start:end]
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "entries": [e.to_dict() for e in entries],
+        }
+
+    @app.post("/api/compact")
+    async def compact_memory():
+        store = MemoryStore()
+        store.load()
+        entries = store.get_all()
+        before = len(entries)
+        if before == 0:
+            return {"ok": True, "before": 0, "after": 0, "summary": "无知识条目"}
+        # 简单的降级 compact — 保留最新 50 条
+        if before > 50:
+            keep = sorted(entries, key=lambda e: e.updated_at or e.created_at, reverse=True)[:50]
+            store.compact("最近对话摘要", source_session_ids=None)
+            store.load()
+            after = len(store.get_all())
+        else:
+            after = before
+        return {"ok": True, "before": before, "after": after}
+
+    # ─── 接口绑定 ────────────────────────────────────
+
+    @app.get("/api/interface/{name}")
+    async def interface_status(name: str):
+        if name == "wechat":
+            token_file = Path.home() / ".mia" / "wechat_bot_token"
+            has_token = token_file.exists() or bool(config.wechat.bot_token)
+            return {"name": "wechat", "has_token": has_token, "enabled": rt.wechat_enabled}
+        elif name == "telegram":
+            token_file = Path.home() / ".mia" / "telegram_bot_token"
+            has_token = token_file.exists() or bool(config.telegram.bot_token)
+            return {"name": "telegram", "has_token": has_token, "enabled": rt.telegram_enabled}
+        return JSONResponse(status_code=404, content={"error": f"未知接口: {name}"})
+
+    # ─── 对话 ────────────────────────────────────────
+
+    @app.post("/api/chat")
     async def chat(request: dict):
-        """发送消息并获取回复"""
         query = request.get("query", "")
         image = request.get("image")
         voice = request.get("voice")
 
         if not query:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "query 不能为空"},
-            )
+            return JSONResponse(status_code=400, content={"error": "query 不能为空"})
 
-        result = await run_agent_pipeline(
-            query=query,
-            image_path=image,
-            voice_path=voice,
-        )
+        result = await run_agent_pipeline(query=query, image_path=image, voice_path=voice)
 
         if result is None:
-            return JSONResponse(
-                status_code=500,
-                content={"error": "处理超时"},
-            )
-
+            return JSONResponse(status_code=500, content={"error": "处理超时"})
         return {"response": result}
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
-    server = uvicorn.Server(config)
-    print(f"  MIA HTTP API 已启动: http://127.0.0.1:{port}")
-    print(f"  API 文档: http://127.0.0.1:{port}/docs")
+    @app.post("/api/chat/stream")
+    async def chat_stream(request: dict):
+        query = request.get("query", "")
+        if not query:
+            return JSONResponse(status_code=400, content={"error": "query 不能为空"})
+
+        async def generate():
+            result = await run_agent_pipeline(
+                query=query,
+                image_path=request.get("image"),
+                voice_path=request.get("voice"),
+                timeout=180.0,
+            )
+            if result:
+                yield f"data: {json.dumps({'text': result, 'done': True})}\n\n"
+            else:
+                yield f"data: {json.dumps({'error': '处理超时', 'done': True})}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+
+    print(f"  MIA HTTP API: http://127.0.0.1:{port}")
+    print(f"  API 文档:     http://127.0.0.1:{port}/docs")
+    if rt.wechat_enabled:
+        print(f"  WeChat:       已启用")
+    if rt.telegram_enabled:
+        print(f"  Telegram:     已启用")
+    config_uv = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    server = uvicorn.Server(config_uv)
     await server.serve()
 
 
