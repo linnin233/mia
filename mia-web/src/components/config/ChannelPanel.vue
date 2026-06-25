@@ -112,6 +112,7 @@
 import { reactive, ref, computed, onMounted } from 'vue'
 import { useChannelStore } from '@/stores/channels'
 import { getInterfaceDetail, updateInterfaceToken } from '@/api/channels'
+import client from '@/api/client'
 import { ElMessage } from 'element-plus'
 
 const channelStore = useChannelStore()
@@ -151,12 +152,10 @@ async function startQrLogin() {
   qrImage.value = ''
   qrStatus.value = ''
   try {
-    const { data } = await (await import('@/api/client')).default.post('/interface/wechat/qrcode')
+    const { data } = await client.post('/interface/wechat/qrcode')
     qrCode.value = data.qrcode
-    if (data.image && data.image.startsWith('data:image')) {
-      qrImage.value = data.image
-    } else if (data.image) {
-      qrImage.value = 'data:image/png;base64,' + data.image
+    if (data.image) {
+      qrImage.value = data.image.startsWith('data:') ? data.image : 'data:image/png;base64,' + data.image
     }
     qrStatus.value = 'waiting'
     startQrPolling()
@@ -173,7 +172,7 @@ function startQrPolling() {
   qrTimer = setInterval(async () => {
     if (!qrCode.value) return
     try {
-      const { data } = await (await import('@/api/client')).default.get(`/interface/wechat/qrcode/${qrCode.value}`)
+      const { data } = await client.get(`/interface/wechat/qrcode/${qrCode.value}`)
       qrStatus.value = data.status
       if (data.status === 'confirmed') {
         stopQrPolling()
