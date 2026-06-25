@@ -1284,6 +1284,65 @@ async def run_server(port: int) -> None:
             return JSONResponse(status_code=500, content={"error": f"无法保存 token: {e}"})
         return {"ok": True, "name": name}
 
+    # ─── 微信 QR 码登录 ──────────────────────────────
+
+    _qrcode_sessions: dict[str, dict] = {}  # qrcode -> {client, status, token}
+
+    @app.post("/api/interface/wechat/qrcode")
+    async def wechat_qrcode_login():
+        """获取微信扫码登录二维码"""
+        from mia.channels.wechat.client import ILinkClient
+        try:
+            client = ILinkClient(bot_token="", base_url=config.wechat.base_url or "https://ilinkai.weixin.qq.com")
+            await client.start()
+            qr_data = await client.get_bot_qrcode()
+            qrcode = qr_data.get("qrcode", "")
+            img_b64 = qr_data.get("qrcode_img_content", "") or qr_data.get("url", "")
+            if not qrcode:
+                await client.stop()
+                return JSONResponse(status_code=500, content={"error": "获取二维码失败"})
+            _qrcode_sessions[qrcode] = {"client": client, "status": "waiting"}
+            return {"qrcode": qrcode, "image": img_b64}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    @app.get("/api/interface/wechat/qrcode/{qrcode}")
+    async def wechat_qrcode_status(qrcode: str):
+        """轮询微信扫码状态"""
+        session = _qrcode_sessions.get(qrcode)
+        if not session:
+            return JSONResponse(status_code=404, content={"error": "二维码会话不存在或已过期"})
+        try:
+            data = await session["client"].get_qrcode_status(qrcode)
+            status = data.get("status", "waiting")
+            session["status"] = status
+            result = {"status": status}
+            if status == "confirmed":
+                token = data.get("bot_token", "")
+                base_url = data.get("baseurl", "")
+                # 保存 token
+                config.wechat.bot_token = token
+                if base_url and base_url.rstrip("/") != config.wechat.base_url:
+                    config.wechat.base_url = base_url.rstrip("/")
+                token_file = Path.home() / ".mia" / "wechat_bot_token"
+                token_file.parent.mkdir(parents=True, exist_ok=True)
+                token_file.write_text(token, encoding="utf-8")
+                result["bot_token"] = token[:8] + "****"
+                # 清理
+                await session["client"].stop()
+                del _qrcode_sessions[qrcode]
+            elif status in ("expired", "timeout"):
+                await session["client"].stop()
+                del _qrcode_sessions[qrcode]
+            return result
+        except Exception as e:
+            try:
+                await session["client"].stop()
+            except Exception:
+                pass
+            _qrcode_sessions.pop(qrcode, None)
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
     # ─── 对话 ────────────────────────────────────────
 
     @app.post("/api/chat")

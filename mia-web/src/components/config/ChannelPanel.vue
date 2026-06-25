@@ -50,6 +50,13 @@
             <div v-else>未配置 Token。请在 Telegram 找 @BotFather 获取。</div>
           </div>
 
+          <!-- QR code login (WeChat only) -->
+          <div v-if="ch.key === 'wechat' && !ch.hasToken" style="margin-top: 4px">
+            <el-button type="success" size="small" :loading="qrLoading" @click="startQrLogin">
+              微信扫码登录
+            </el-button>
+          </div>
+
           <!-- Token editing -->
           <div v-if="editState[ch.key].editing" style="margin-top: 4px">
             <el-input
@@ -73,6 +80,31 @@
         </div>
       </el-card>
     </div>
+
+    <!-- QR Code Login Dialog -->
+    <el-dialog v-model="qrDialogVisible" title="微信扫码登录" width="380px" @close="stopQrPolling">
+      <div style="text-align: center">
+        <div v-if="qrStatus === 'waiting'" style="color: #909399; margin-bottom: 12px">
+          请使用手机微信扫描下方二维码
+        </div>
+        <div v-else-if="qrStatus === 'scanned'" style="color: #409EFF; margin-bottom: 12px">
+          已扫描，请在手机上确认登录
+        </div>
+        <div v-else-if="qrStatus === 'confirmed'" style="color: #67c23a; margin-bottom: 12px">
+          登录成功！
+        </div>
+        <div v-else-if="qrStatus === 'expired'" style="color: #f56c6c; margin-bottom: 12px">
+          二维码已过期，请重新获取
+        </div>
+        <img v-if="qrImage" :src="qrImage" style="max-width: 100%; border: 1px solid #eee; border-radius: 8px" />
+        <div v-if="!qrImage && qrLoading" style="padding: 40px; color: #909399">
+          正在获取二维码...
+        </div>
+        <div v-if="qrStatus === 'expired'" style="margin-top: 12px">
+          <el-button size="small" type="primary" @click="startQrLogin">重新获取</el-button>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -92,6 +124,14 @@ const editState = reactive<Record<string, { editing: boolean; editToken: string;
   telegram: { editing: false, editToken: '', saving: false },
 })
 
+// QR code login state
+const qrDialogVisible = ref(false)
+const qrLoading = ref(false)
+const qrImage = ref('')
+const qrCode = ref('')
+const qrStatus = ref('')
+let qrTimer: any = null
+
 onMounted(async () => {
   await channelStore.fetchStatus()
   for (const name of ['wechat', 'telegram']) {
@@ -104,6 +144,53 @@ const channelList = computed(() => [
   { key: 'wechat' as const, label: '微信 (iLink Bot)', enabled: channelStore.channels.wechat?.enabled ?? false, hasToken: channelStore.channels.wechat?.has_token ?? false, toggling: toggling.value['wechat'] ?? false, detail: details.value['wechat'] },
   { key: 'telegram' as const, label: '纸飞机 (Bot API)', enabled: channelStore.channels.telegram?.enabled ?? false, hasToken: channelStore.channels.telegram?.has_token ?? false, toggling: toggling.value['telegram'] ?? false, detail: details.value['telegram'] },
 ])
+
+async function startQrLogin() {
+  qrLoading.value = true
+  qrDialogVisible.value = true
+  qrImage.value = ''
+  qrStatus.value = ''
+  try {
+    const { data } = await (await import('@/api/client')).default.post('/interface/wechat/qrcode')
+    qrCode.value = data.qrcode
+    if (data.image && data.image.startsWith('data:image')) {
+      qrImage.value = data.image
+    } else if (data.image) {
+      qrImage.value = 'data:image/png;base64,' + data.image
+    }
+    qrStatus.value = 'waiting'
+    startQrPolling()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || '获取二维码失败')
+    qrDialogVisible.value = false
+  } finally {
+    qrLoading.value = false
+  }
+}
+
+function startQrPolling() {
+  stopQrPolling()
+  qrTimer = setInterval(async () => {
+    if (!qrCode.value) return
+    try {
+      const { data } = await (await import('@/api/client')).default.get(`/interface/wechat/qrcode/${qrCode.value}`)
+      qrStatus.value = data.status
+      if (data.status === 'confirmed') {
+        stopQrPolling()
+        const name = 'wechat'
+        details.value[name] = await getInterfaceDetail(name)
+        await channelStore.fetchStatus()
+        setTimeout(() => { qrDialogVisible.value = false }, 1500)
+      } else if (data.status === 'expired' || data.status === 'timeout') {
+        stopQrPolling()
+      }
+    } catch {}
+  }, 2000)
+}
+
+function stopQrPolling() {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null }
+}
 
 function startEdit(name: string) { editState[name].editing = true; editState[name].editToken = '' }
 function cancelEdit(name: string) { editState[name].editing = false; editState[name].editToken = '' }
