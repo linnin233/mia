@@ -196,22 +196,56 @@ class RuntimeConfig:
     _STATE_FILE = Path(__file__).parent.parent.parent / "data" / "config.json"
 
     def load_runtime_state(self) -> None:
-        """从 data/config.json 恢复渠道开关状态"""
+        """从 data/config.json 恢复所有运行时配置"""
         try:
             if self._STATE_FILE.exists():
                 data = json.loads(self._STATE_FILE.read_text(encoding="utf-8"))
+                # 模型开关
+                if "model_enabled" in data:
+                    for k, v in data["model_enabled"].items():
+                        self.model_enabled[k] = v
+                # Agent 模型分配
+                for key in ("scheduler_model", "scheduler_fallback", "task_model", "task_fallback",
+                            "memory_model", "memory_fallback", "receiver_text_model",
+                            "receiver_vision_model", "receiver_audio_model",
+                            "sender_tts_model"):
+                    if key in data:
+                        setattr(self, key, data[key])
+                # 功能开关
+                for key in ("receiver_vision_enabled", "receiver_audio_enabled",
+                            "sender_tts_enabled", "wechat_sender_tts_enabled",
+                            "telegram_sender_tts_enabled"):
+                    if key in data:
+                        setattr(self, key, data[key])
+                # 渠道开关
                 if data.get("wechat_enabled"):
                     self.wechat_enabled = True
                 if data.get("telegram_enabled"):
                     self.telegram_enabled = True
         except Exception:
-            pass  # 文件损坏时静默跳过，使用默认值
+            pass
 
     def save_runtime_state(self) -> None:
-        """持久化渠道开关状态到 data/config.json（原子写入）"""
+        """持久化所有运行时配置到 data/config.json（原子写入）"""
         try:
             self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             data = {
+                "model_enabled": dict(self.model_enabled),
+                "scheduler_model": self.scheduler_model,
+                "scheduler_fallback": self.scheduler_fallback,
+                "task_model": self.task_model,
+                "task_fallback": self.task_fallback,
+                "memory_model": self.memory_model,
+                "memory_fallback": self.memory_fallback,
+                "receiver_text_model": self.receiver_text_model,
+                "receiver_vision_model": self.receiver_vision_model,
+                "receiver_audio_model": self.receiver_audio_model,
+                "receiver_vision_enabled": self.receiver_vision_enabled,
+                "receiver_audio_enabled": self.receiver_audio_enabled,
+                "sender_tts_model": self.sender_tts_model,
+                "sender_tts_enabled": self.sender_tts_enabled,
+                "wechat_sender_tts_enabled": self.wechat_sender_tts_enabled,
+                "telegram_sender_tts_enabled": self.telegram_sender_tts_enabled,
                 "wechat_enabled": self.wechat_enabled,
                 "telegram_enabled": self.telegram_enabled,
             }
@@ -219,7 +253,7 @@ class RuntimeConfig:
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(self._STATE_FILE)
         except Exception:
-            pass  # 写入失败不影响运行
+            pass
 
 
 class Config:

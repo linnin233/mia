@@ -827,6 +827,7 @@ async def run_cli_interactive() -> None:
             if user_input.lower() == "/model":
                 action = await handle_model_command(rt)
                 if action == CommandAction.RECONFIGURE_AGENTS:
+                    rt.save_runtime_state()
                     agent_list, tasks = await _reconfigure_agents(
                         agent_list, tasks, bus, config,
                         session_manager=session_manager,
@@ -838,6 +839,7 @@ async def run_cli_interactive() -> None:
             if user_input.lower() == "/agent":
                 action = await handle_agent_command(rt)
                 if action == CommandAction.RECONFIGURE_AGENTS:
+                    rt.save_runtime_state()
                     agent_list, tasks = await _reconfigure_agents(
                         agent_list, tasks, bus, config,
                         session_manager=session_manager,
@@ -1159,6 +1161,7 @@ async def run_server(port: int) -> None:
     async def toggle_model(model_id: str, data: dict):
         enabled = data.get("enabled", True)
         rt.model_enabled[model_id] = enabled
+        rt.save_runtime_state()
         return {"ok": True, "model_id": model_id, "enabled": enabled}
 
     # ─── Agent 模型分配 ──────────────────────────────
@@ -1224,6 +1227,7 @@ async def run_server(port: int) -> None:
                 rt.sender_tts_enabled = data["tts_enabled"]
         else:
             return JSONResponse(status_code=400, content={"error": f"未知 Agent: {agent_name}"})
+        rt.save_runtime_state()
         return {"ok": True, "agent": agent_name}
 
     @app.get("/api/agents/capabilities")
