@@ -37,6 +37,7 @@ from mia.bus.message import (
     make_stream_end,
 )
 from mia.providers.base import BaseProvider
+from mia.util import ts
 
 
 # ─── Prompt 加载 — 从 prompts/ 目录读取，支持用户自定义 ──

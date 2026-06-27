@@ -45,6 +45,7 @@ from mia.memory.store import (
 from mia.memory.retriever import MemoryRetriever
 from mia.providers.base import BaseProvider
 from typing import TYPE_CHECKING
+from mia.util import ts
 if TYPE_CHECKING:
     from mia.session.manager import SessionManager, SessionState
 
@@ -450,17 +451,17 @@ class MemoryAgent(BaseAgent):
         from mia.config import get_config
         verbose = get_config().agent.verbose
         if verbose:
-            print(f"\033[34m[MemoryAgent]\033[0m 检索记忆")
+            print(f"{ts()} \033[34m[MemoryAgent]\033[0m 检索记忆")
             print(f"   \033[90m├─\033[0m 意图: {intent[:80]}")
             print(f"   \033[90m├─\033[0m 对话历史: {len(self._conversation_history)} 轮可用, 注入最近 {min(len(self._conversation_history), self.max_history_turns)} 轮")
             print(f"   \033[90m├─\033[0m 持久知识: {self.store.count} 条")
             print(f"   \033[90m├─\033[0m 临时记忆: {len(self._working_memory)} 条")
             if knowledge_text:
-                print(f"   \033[90m├─\033[0m 知识注入: {knowledge_text[:80]}...")
+                print(f"{ts()}    \033[90m├─\033[0m 知识注入: {knowledge_text[:80]}...")
             else:
                 print(f"   \033[90m├─\033[0m 无相关知识")
             if history_text:
-                print(f"   \033[90m└─\033[0m 历史注入: 最近 {min(len(self._conversation_history), self.max_history_turns)} 轮对话")
+                print(f"{ts()}    \033[90m└─\033[0m 历史注入: 最近 {min(len(self._conversation_history), self.max_history_turns)} 轮对话")
             else:
                 print(f"   \033[90m└─\033[0m 无对话历史")
             print()

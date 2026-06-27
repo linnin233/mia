@@ -46,6 +46,7 @@ from mia.channels.wechat.receiver import WeChatReceiverAgent
 from mia.channels.wechat.sender import WeChatSenderAgent
 from mia.channels.telegram.receiver import TelegramReceiverAgent
 from mia.channels.telegram.sender import TelegramSenderAgent
+from mia.util import ts
 from mia.cli.commands import (
     handle_model_command,
     handle_agent_command,
@@ -260,7 +261,7 @@ async def run_agent_pipeline(
         )
         await bus.publish(raw_msg)
 
-        print(f"\033[36m[Main]\033[0m 用户输入已注入: {query[:100]}")
+        print(f"{ts()} \033[36m[Main]\033[0m 用户输入已注入: {query[:100]}")
 
         # ─── 6. 等待 Sender 输出 ──────────────────────
         # Main 也订阅总线，监听 SEND_TEXT
@@ -908,7 +909,7 @@ async def run_cli_interactive() -> None:
             )
             await bus.publish(raw_msg)
 
-            print(f"\033[36m[Main]\033[0m 用户输入已注入: {user_input}")
+            print(f"{ts()} \033[36m[Main]\033[0m 用户输入已注入: {user_input}")
 
             # 等待 CONVERSATION_DONE
             await bus.subscribe("main")

@@ -21,6 +21,7 @@ from mia.bus.message import (
     make_user_intent,
 )
 from mia.providers.mimo import MiMoProvider
+from mia.util import ts
 
 
 class ReceiverAgent(BaseAgent):
@@ -106,7 +107,7 @@ class ReceiverAgent(BaseAgent):
         from mia.config import get_config
         verbose = get_config().agent.verbose
         if verbose:
-            print(f"\033[35m[Receiver]\033[0m 理解用户输入")
+            print(f"{ts()} \033[35m[Receiver]\033[0m 理解用户输入")
             print(f"   \033[90m├─\033[0m 原始输入: {text if text else '(无文本)'}")
             if image_path:
                 print(f"   \033[90m├─\033[0m 图片: {image_path}")

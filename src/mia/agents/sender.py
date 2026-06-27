@@ -17,6 +17,7 @@ from mia.agents.base import BaseAgent
 from mia.bus.bus import MessageBus
 from mia.bus.message import Message, MessageType
 from mia.providers.mimo import MiMoProvider
+from mia.util import ts
 
 
 class SenderAgent(BaseAgent):
@@ -63,7 +64,7 @@ class SenderAgent(BaseAgent):
         verbose = get_config().agent.verbose
         if verbose:
             print()
-            print(f"\033[32m[Sender]\033[0m 输出回复:")
+            print(f"{ts()} \033[32m[Sender]\033[0m 输出回复:")
             print(f"   \033[90m└─\033[0m {message}")
             print()
             print(f"\033[1m{'-'*50}\033[0m")
@@ -96,7 +97,7 @@ class SenderAgent(BaseAgent):
         verbose = get_config().agent.verbose
         if verbose:
             print()
-            print(f"\033[32m[Sender]\033[0m 输出回复:")
+            print(f"{ts()} \033[32m[Sender]\033[0m 输出回复:")
             print(f"   \033[90m└─\033[0m ", end="", flush=True)
 
     async def _handle_stream_chunk(self, msg: Message) -> None:
