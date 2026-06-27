@@ -85,6 +85,17 @@ def parse_args():
     return parser.parse_args()
 
 
+
+def _select_provider(model_id: str, mimo, deepseek):
+    """根据模型 ID 自动选择正确的 Provider 实例"""
+    if not model_id:
+        return mimo
+    from mia.model_registry import MODEL_REGISTRY
+    info = MODEL_REGISTRY.get(model_id)
+    if info and info.provider == "deepseek" and deepseek:
+        return deepseek
+    return mimo
+
 async def run_agent_pipeline(
     query: str,
     image_path: Optional[str] = None,
@@ -138,9 +149,9 @@ async def run_agent_pipeline(
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.scheduler_model, mimo, deepseek),
         model=rt.scheduler_model,
-        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_provider=_select_provider(rt.scheduler_fallback, deepseek, mimo) if rt.scheduler_fallback else None,
         fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming,
     )
@@ -151,18 +162,18 @@ async def run_agent_pipeline(
     )
     task_agent = TaskAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.task_model, mimo, deepseek),
         model=rt.task_model,
-        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_provider=_select_provider(rt.task_fallback, deepseek, mimo) if rt.task_fallback else None,
         fallback_model=rt.task_fallback if rt.task_fallback else None,
     )
 
     # MemoryAgent — 记忆检索与存储
     memory_agent = MemoryAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.memory_model, mimo, deepseek),
         model=rt.memory_model,
-        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_provider=_select_provider(rt.memory_fallback, deepseek, mimo) if rt.memory_fallback else None,
         fallback_model=rt.memory_fallback if rt.memory_fallback else None,
     )
 
@@ -387,9 +398,9 @@ async def _reconfigure_agents(
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.scheduler_model, mimo, deepseek),
         model=rt.scheduler_model,
-        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_provider=_select_provider(rt.scheduler_fallback, deepseek, mimo) if rt.scheduler_fallback else None,
         fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming,
     )
@@ -400,16 +411,16 @@ async def _reconfigure_agents(
     )
     task_agent = TaskAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.task_model, mimo, deepseek),
         model=rt.task_model,
-        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_provider=_select_provider(rt.task_fallback, deepseek, mimo) if rt.task_fallback else None,
         fallback_model=rt.task_fallback if rt.task_fallback else None,
     )
     memory_agent = MemoryAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.memory_model, mimo, deepseek),
         model=rt.memory_model,
-        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_provider=_select_provider(rt.memory_fallback, deepseek, mimo) if rt.memory_fallback else None,
         fallback_model=rt.memory_fallback if rt.memory_fallback else None,
         session_manager=session_manager,
     )
@@ -575,9 +586,9 @@ async def run_cli_interactive() -> None:
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
     scheduler = SchedulerAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.scheduler_model, mimo, deepseek),
         model=rt.scheduler_model,
-        fallback_provider=deepseek if rt.scheduler_fallback else None,
+        fallback_provider=_select_provider(rt.scheduler_fallback, deepseek, mimo) if rt.scheduler_fallback else None,
         fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming,
     )
@@ -588,16 +599,16 @@ async def run_cli_interactive() -> None:
     )
     task_agent = TaskAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.task_model, mimo, deepseek),
         model=rt.task_model,
-        fallback_provider=deepseek if rt.task_fallback else None,
+        fallback_provider=_select_provider(rt.task_fallback, deepseek, mimo) if rt.task_fallback else None,
         fallback_model=rt.task_fallback if rt.task_fallback else None,
     )
     memory_agent = MemoryAgent(
         bus=bus,
-        provider=mimo,
+        provider=_select_provider(rt.memory_model, mimo, deepseek),
         model=rt.memory_model,
-        fallback_provider=deepseek if rt.memory_fallback else None,
+        fallback_provider=_select_provider(rt.memory_fallback, deepseek, mimo) if rt.memory_fallback else None,
         fallback_model=rt.memory_fallback if rt.memory_fallback else None,
         session_manager=session_manager,
     )
@@ -1014,18 +1025,18 @@ async def run_server(port: int) -> None:
 
     # 核心 Agent（持久化，处理渠道消息）
     receiver = ReceiverAgent(bus=bus, mimo=mimo)
-    memory_agent = MemoryAgent(bus=bus, provider=mimo, model=rt.memory_model,
-        fallback_provider=deepseek if rt.memory_fallback else None,
+    memory_agent = MemoryAgent(bus=bus, provider=_select_provider(rt.memory_model, mimo, deepseek), model=rt.memory_model,
+        fallback_provider=_select_provider(rt.memory_fallback, deepseek, mimo) if rt.memory_fallback else None,
         fallback_model=rt.memory_fallback if rt.memory_fallback else None,
         session_manager=session_manager)
-    scheduler = SchedulerAgent(bus=bus, provider=mimo, model=rt.scheduler_model,
-        fallback_provider=deepseek if rt.scheduler_fallback else None,
+    scheduler = SchedulerAgent(bus=bus, provider=_select_provider(rt.scheduler_model, mimo, deepseek), model=rt.scheduler_model,
+        fallback_provider=_select_provider(rt.scheduler_fallback, deepseek, mimo) if rt.scheduler_fallback else None,
         fallback_model=rt.scheduler_fallback if rt.scheduler_fallback else None,
         enable_streaming=config.agent.enable_streaming)
     sender = SenderAgent(bus=bus, mimo=mimo if rt.sender_tts_enabled else None,
         output_dir=config.agent.workspace_dir)
-    task_agent = TaskAgent(bus=bus, provider=mimo, model=rt.task_model,
-        fallback_provider=deepseek if rt.task_fallback else None,
+    task_agent = TaskAgent(bus=bus, provider=_select_provider(rt.task_model, mimo, deepseek), model=rt.task_model,
+        fallback_provider=_select_provider(rt.task_fallback, deepseek, mimo) if rt.task_fallback else None,
         fallback_model=rt.task_fallback if rt.task_fallback else None)
 
     server_agents = [receiver, memory_agent, scheduler, sender, task_agent]
