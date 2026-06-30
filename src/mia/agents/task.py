@@ -32,6 +32,7 @@ from mia.tools.shell import ShellTool
 from mia.tools.web_search import WebSearchTool
 from mia.tools.weather import WeatherTool
 from mia.tools.file import FileTool
+from mia.tools.sleep import SleepTool
 
 
 # ─── TaskAgent System Prompt (从 prompts/ 加载) ─────
@@ -95,7 +96,7 @@ class TaskAgent(BaseAgent):
                 self.tools[tool.name] = tool
         else:
             # 默认注册全部内置工具
-            default_tools = [ShellTool(), WebSearchTool(), WeatherTool(), FileTool()]
+            default_tools = [ShellTool(), WebSearchTool(), WeatherTool(), FileTool(), SleepTool()]
             for tool in default_tools:
                 self.tools[tool.name] = tool
 
