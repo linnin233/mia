@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -98,7 +99,6 @@ def _select_provider(model_id: str, mimo, deepseek):
 
 
 # 全局 agent 流转追踪 (供 Web API 返回 trace)
-_pipeline_traces: dict[str, list] = {}
 
 async def run_agent_pipeline(
     query: str,
@@ -122,8 +122,6 @@ async def run_agent_pipeline(
     config = get_config()
     rt = config.runtime
     session_id = uuid.uuid4().hex[:12]
-    _t0 = time.time()
-    _trace: list[dict] = [{"agent": "Main", "ts": f"{time.time() - _t0:.3f}s", "detail": "用户输入已注入"}]
     bus = MessageBus(max_queue_size=100)
     await bus.start()
 
@@ -278,7 +276,6 @@ async def run_agent_pipeline(
             session_id=session_id,
         )
         await bus.publish(raw_msg)
-        _trace.append({"agent": "Receiver", "ts": f"{time.time() - _t0:.3f}s", "detail": "理解用户输入"})
 
         print(f"{ts()} \033[36m[Main]\033[0m 用户输入已注入: {query[:100]}")
 
@@ -296,7 +293,6 @@ async def run_agent_pipeline(
 
             if msg.msg_type == MessageType.CONVERSATION_DONE:
                 final_response = msg.payload.get("message", "")
-                _tmark("Sender", "回复已生成")
                 break
 
             # 也检查 ERROR 等系统消息
@@ -328,9 +324,6 @@ async def run_agent_pipeline(
 
         await bus.stop()
 
-    # 将 trace 附加为返回值属性 (调用方在 run_cli_interactive 中通过 bus 获取)
-    if final_response:
-        _pipeline_trace.append({"agent": "TOTAL", "ms": round((time.time() - _t0) * 1000), "detail": "全链路耗时"})
     return final_response
 
 
@@ -1007,9 +1000,6 @@ def _generate_qr_base64(data: str) -> str:
 
 
 
-def _trace_default():
-    return [{"agent":"Receiver","ts":"~2ms","detail":"多模态理解"},{"agent":"MemoryAgent","ts":"~1s","detail":"检索记忆+对话历史"},{"agent":"Scheduler","ts":"~4s","detail":"LLM决策回复"},{"agent":"Sender","ts":"~2ms","detail":"输出回复"}]
-
 def _build_api_app(config, rt, session_manager, bus, memory_agent):
     """构建 FastAPI app — 复用持久管线"""
     from fastapi import FastAPI, Query
@@ -1187,9 +1177,7 @@ def _build_api_app(config, rt, session_manager, bus, memory_agent):
             {"agent": "Sender", "ms": 2, "detail": "输出回复"},
         ]
         if result is None: return JSONResponse(status_code=500, content={"error":"timeout"})
-        sid = request.get("session_id", "")
-        trace_info = _pipeline_traces.pop(sid, []) if sid else []
-        return {"response": result, "trace": trace_info or _trace_default()}
+        return {"response": result}
 
     @app.post("/api/chat/stream")
     async def chat_stream(request: dict):
