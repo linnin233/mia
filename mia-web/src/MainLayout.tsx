@@ -39,8 +39,8 @@ export default function MainLayout() {
 
   return (
     <AntApp>
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ background: '#001529', display: 'flex', alignItems: 'center', padding: '0 16px', gap: 16 }}>
+      <Layout style={{ height: '100vh' }}>
+        <Header style={{ height: 48, lineHeight: '48px', background: '#001529', display: 'flex', alignItems: 'center', padding: '0 16px', gap: 16 }}>
           <span style={{ color: '#fff', fontWeight: 'bold', fontSize: 16, whiteSpace: 'nowrap' }}>MIA 控制台</span>
           <Select
             value={currentId || undefined}
@@ -64,8 +64,8 @@ export default function MainLayout() {
             ]}
           />
         </Header>
-        <Layout>
-          <Sider width={220} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: 12 }}>
+        <Layout style={{ height: 0, flex: 1 }}>
+          <Sider width={220} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: 12, overflow: 'auto' }}>
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>渠道状态</div>
               <div style={{ fontSize: 12 }}>
