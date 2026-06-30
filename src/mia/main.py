@@ -181,6 +181,7 @@ async def run_agent_pipeline(
         model=rt.memory_model,
         fallback_provider=_select_provider(rt.memory_fallback, deepseek, mimo) if rt.memory_fallback else None,
         fallback_model=rt.memory_fallback if rt.memory_fallback else None,
+        session_manager=getattr(run_agent_pipeline, "_sm", None),
     )
 
     # WeChat 通信渠道 (可选) — 收发分离
@@ -1174,7 +1175,7 @@ def _build_api_app(config, rt, session_manager, bus, memory_agent):
         q = request.get("query","")
         if not q: return JSONResponse(status_code=400, content={"error":"query empty"})
         import time as _time
-        trace = []
+        run_agent_pipeline._sm = session_manager  # 注入 session_manager
         _t0 = _time.time()
         result = await run_agent_pipeline(query=q, image_path=request.get("image"), voice_path=request.get("voice"))
         _total = round((_time.time() - _t0) * 1000)
@@ -1195,6 +1196,7 @@ def _build_api_app(config, rt, session_manager, bus, memory_agent):
         q = request.get("query","")
         if not q: return JSONResponse(status_code=400, content={"error":"query empty"})
         async def gen():
+            run_agent_pipeline._sm = session_manager
             result = await run_agent_pipeline(query=q, image_path=request.get("image"), voice_path=request.get("voice"))
             if result: yield f"data: {json.dumps({'text':result,'done':True})}\n\n"
             else: yield f"data: {json.dumps({'error':'timeout','done':True})}\n\n"
