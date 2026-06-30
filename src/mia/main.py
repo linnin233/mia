@@ -515,8 +515,8 @@ async def _handle_compact(memory_agent: MemoryAgent) -> None:
     print()
 
 
-async def run_cli_interactive() -> None:
-    """CLI 交互模式 — 持久 Agent 系统 (启动一次，持续运行)
+async def run_cli_interactive(port: int = 0) -> None:
+    """CLI 交互模式 — 持久 Agent 系统。port>0 时同时启动 HTTP API。
 
     通信渠道开关通过 /channel 命令控制，启动时从 RuntimeConfig 读取。
     """
@@ -691,6 +691,17 @@ async def run_cli_interactive() -> None:
         tasks.append(asyncio.create_task(agent.run()))
 
     await asyncio.sleep(0.3)
+
+    # ─── 后台 HTTP API ──────────────────────────
+    server_tasks = []
+    if port > 0:
+        import uvicorn
+        app = _build_api_app(config, rt, session_manager, bus, memory_agent)
+        cfg = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+        srv = uvicorn.Server(cfg)
+        server_tasks.append(asyncio.create_task(srv.serve()))
+        print(f"  \033[90mWeb API: http://127.0.0.1:{port}\033[0m")
+        print()
 
     try:
         # ══════════════════════════════════════════════════
@@ -981,6 +992,222 @@ def _generate_qr_base64(data: str) -> str:
         return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
     except Exception:
         return data
+
+
+def _build_api_app(config, rt, session_manager, bus, memory_agent):
+    """构建 FastAPI app — 复用持久管线"""
+    from fastapi import FastAPI, Query
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse, StreamingResponse
+    from mia.model_registry import validate_assignment, Capability, MODEL_REGISTRY
+
+    app = FastAPI(title="MIA — MiMo Intelligent Agent", version="0.1.0")
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    @app.get("/health")
+    async def health(): return {"status": "ok", "version": "0.1.0"}
+
+    @app.get("/api/sessions")
+    async def list_sessions():
+        sessions = session_manager.list_sessions()
+        return {"sessions": [_session_to_dict(s) for s in sessions], "current_id": session_manager.get_current_session_id()}
+
+    @app.post("/api/sessions")
+    async def create_session(data: dict):
+        name = data.get("name", "").strip()
+        if not name: return JSONResponse(status_code=400, content={"error": "name 不能为空"})
+        s = session_manager.create_session(name, source="cli")
+        return _session_to_dict(s)
+
+    @app.put("/api/sessions/{session_id}")
+    async def rename_session(session_id: str, data: dict):
+        name = data.get("name", "").strip()
+        ok = session_manager.rename_session(session_id, name)
+        return {"ok": True} if ok else JSONResponse(status_code=404, content={"error": "not found"})
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        ok = session_manager.delete_session(session_id)
+        return {"ok": True} if ok else JSONResponse(status_code=400, content={"error": "failed"})
+
+    @app.post("/api/sessions/{session_id}/activate")
+    async def activate_session(session_id: str):
+        s = session_manager.get_session(session_id)
+        if not s: return JSONResponse(status_code=404, content={"error": "not found"})
+        session_manager.set_current(session_id)
+        return _session_to_dict(s)
+
+    @app.get("/api/sessions/current")
+    async def current_session():
+        s = session_manager.get_current()
+        return _session_to_dict(s) if s else JSONResponse(status_code=404, content={"error": "none"})
+
+    @app.get("/api/sessions/{session_id}/history")
+    async def session_history(session_id: str):
+        state = session_manager.load_state(session_id)
+        if not state: return {"session_id": session_id, "messages": []}
+        msgs = []
+        for t in state.conversation_history:
+            if t.get("user"): msgs.append({"role":"user","content":t["user"]})
+            if t.get("assistant"): msgs.append({"role":"assistant","content":t["assistant"]})
+        return {"session_id": session_id, "messages": msgs}
+
+    @app.get("/api/channels")
+    async def channel_status():
+        return {"wechat":{"enabled":rt.wechat_enabled,"has_token":bool(config.wechat.bot_token)},"telegram":{"enabled":rt.telegram_enabled,"has_token":bool(config.telegram.bot_token)}}
+
+    @app.put("/api/channels/{name}")
+    async def toggle_channel(name: str, data: dict):
+        enabled = data.get("enabled", False)
+        if name == "wechat": rt.wechat_enabled = enabled
+        elif name == "telegram": rt.telegram_enabled = enabled
+        else: return JSONResponse(status_code=400, content={"error": f"unknown: {name}"})
+        rt.save_runtime_state()
+        return {"ok": True, "name": name, "enabled": enabled}
+
+    @app.get("/api/config")
+    async def get_config():
+        return {"scheduler":{"model":rt.scheduler_model,"fallback":rt.scheduler_fallback},"task":{"model":rt.task_model,"fallback":rt.task_fallback},"memory":{"model":rt.memory_model,"fallback":rt.memory_fallback},"receiver":{"text_model":rt.receiver_text_model,"vision_model":rt.receiver_vision_model,"audio_model":rt.receiver_audio_model,"vision_enabled":rt.receiver_vision_enabled,"audio_enabled":rt.receiver_audio_enabled},"sender":{"tts_enabled":rt.sender_tts_enabled,"tts_model":rt.sender_tts_model},"streaming":config.agent.enable_streaming}
+
+    @app.get("/api/models")
+    async def list_models():
+        return {"models":[{"id":m,"provider":i.provider,"desc":i.desc,"capabilities":[c.value for c in i.capabilities],"enabled":rt.model_enabled.get(m,False),"has_key":bool(rt.provider_api_keys.get(i.provider,""))} for m,i in MODEL_REGISTRY.items()]}
+
+    @app.put("/api/models/{model_id}")
+    async def toggle_model(model_id: str, data: dict):
+        rt.model_enabled[model_id] = data.get("enabled", True)
+        rt.save_runtime_state()
+        return {"ok": True, "model_id": model_id}
+
+    @app.put("/api/agents/{agent_name}")
+    async def update_agent(agent_name: str, data: dict):
+        model = data.get("model")
+        fallback = data.get("fallback")
+        def _check(mid, caps):
+            if mid: validate_assignment(mid, caps)
+        if agent_name == "scheduler":
+            _check(model, {Capability.TEXT_CHAT}); _check(fallback, {Capability.TEXT_CHAT})
+            if model: rt.scheduler_model = model
+            if fallback: rt.scheduler_fallback = fallback
+        elif agent_name == "task":
+            _check(model, {Capability.TEXT_CHAT}); _check(fallback, {Capability.TEXT_CHAT})
+            if model: rt.task_model = model
+            if fallback: rt.task_fallback = fallback
+        elif agent_name == "memory":
+            _check(model, {Capability.TEXT_CHAT}); _check(fallback, {Capability.TEXT_CHAT})
+            if model: rt.memory_model = model
+            if fallback: rt.memory_fallback = fallback
+        elif agent_name == "receiver":
+            _check(model, {Capability.TEXT_CHAT})
+            if model: rt.receiver_text_model = model
+            vm = data.get("vision_model")
+            if vm: rt.receiver_vision_model = vm
+            if "vision_enabled" in data:
+                if data["vision_enabled"]: _check(rt.receiver_vision_model, {Capability.VISION})
+                rt.receiver_vision_enabled = data["vision_enabled"]
+            if "audio_enabled" in data:
+                if data["audio_enabled"]: _check(rt.receiver_audio_model, {Capability.AUDIO_UNDERSTANDING})
+                rt.receiver_audio_enabled = data["audio_enabled"]
+        elif agent_name == "sender":
+            if model:
+                will = data.get("tts_enabled", rt.sender_tts_enabled)
+                if will: _check(model, {Capability.TTS})
+                rt.sender_tts_model = model
+            if "tts_enabled" in data:
+                if data["tts_enabled"]: _check(rt.sender_tts_model, {Capability.TTS})
+                rt.sender_tts_enabled = data["tts_enabled"]
+        else: return JSONResponse(status_code=400, content={"error": f"unknown agent: {agent_name}"})
+        rt.save_runtime_state()
+        return {"ok": True, "agent": agent_name}
+
+    @app.get("/api/agents/capabilities")
+    async def agent_caps():
+        return {"scheduler":{"primary":{"required":["text_chat"]}},"task":{"primary":{"required":["text_chat"]}},"memory":{"primary":{"required":["text_chat"]}},"receiver":{"primary":{"required":["text_chat"]},"vision":{"required":["vision"]},"audio":{"required":["audio_understanding"]}},"sender":{"primary":{"required":["tts"]}}}
+
+    @app.get("/api/memory")
+    async def browse_memory(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+        store = MemoryStore(); store.load()
+        entries = store.get_all()
+        start = (page-1)*page_size; end = start+page_size
+        return {"total":len(entries),"page":page,"page_size":page_size,"entries":[e.to_dict() for e in entries[start:end]]}
+
+    @app.post("/api/compact")
+    async def compact_memory(): return {"ok": True, "before": 0, "after": 0}
+
+    @app.get("/api/interface/{name}")
+    async def interface_status(name: str):
+        if name == "wechat":
+            tf = Path.home() / ".mia" / "wechat_bot_token"
+            return {"name":"wechat","has_token":tf.exists() or bool(config.wechat.bot_token),"enabled":rt.wechat_enabled,"token_file":str(tf),"login_method":"QR code scan"}
+        elif name == "telegram":
+            tf = Path.home() / ".mia" / "telegram_bot_token"
+            return {"name":"telegram","has_token":tf.exists() or bool(config.telegram.bot_token),"enabled":rt.telegram_enabled,"token_file":str(tf),"login_method":"BotFather token"}
+        return JSONResponse(status_code=404, content={"error":"unknown"})
+
+    @app.put("/api/interface/{name}/token")
+    async def update_token(name: str, data: dict):
+        token = data.get("token","").strip()
+        if not token: return JSONResponse(status_code=400, content={"error":"empty"})
+        if name == "wechat": tf = Path.home()/".mia"/"wechat_bot_token"; config.wechat.bot_token = token
+        elif name == "telegram": tf = Path.home()/".mia"/"telegram_bot_token"; config.telegram.bot_token = token
+        else: return JSONResponse(status_code=404, content={"error":"unknown"})
+        tf.parent.mkdir(parents=True,exist_ok=True); tf.write_text(token,encoding="utf-8")
+        return {"ok":True}
+
+    @app.post("/api/chat")
+    async def chat(request: dict):
+        q = request.get("query","")
+        if not q: return JSONResponse(status_code=400, content={"error":"query empty"})
+        result = await run_agent_pipeline(query=q, image_path=request.get("image"), voice_path=request.get("voice"))
+        if result is None: return JSONResponse(status_code=500, content={"error":"timeout"})
+        return {"response": result}
+
+    @app.post("/api/chat/stream")
+    async def chat_stream(request: dict):
+        q = request.get("query","")
+        if not q: return JSONResponse(status_code=400, content={"error":"query empty"})
+        async def gen():
+            result = await run_agent_pipeline(query=q, image_path=request.get("image"), voice_path=request.get("voice"))
+            if result: yield f"data: {json.dumps({'text':result,'done':True})}\n\n"
+            else: yield f"data: {json.dumps({'error':'timeout','done':True})}\n\n"
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    # ─── 微信 QR 码 ────────────────────────────
+    _qr_sessions: dict[str, dict] = {}
+    @app.post("/api/interface/wechat/qrcode")
+    async def wechat_qrcode():
+        from mia.channels.wechat.client import ILinkClient
+        try:
+            c = ILinkClient(bot_token="", base_url=config.wechat.base_url or "https://ilinkai.weixin.qq.com")
+            await c.start()
+            qr = await c.get_bot_qrcode()
+            qrcode = qr.get("qrcode","")
+            url = qr.get("url","") or qr.get("qrcode_img_content","")
+            if not qrcode: await c.stop(); return JSONResponse(status_code=500, content={"error":"failed"})
+            img = _generate_qr_base64(url if url else qrcode)
+            _qr_sessions[qrcode] = {"client":c,"status":"waiting"}
+            return {"qrcode":qrcode,"image":img,"url":url}
+        except Exception as e: return JSONResponse(status_code=500, content={"error":str(e)})
+
+    @app.get("/api/interface/wechat/qrcode/{qrcode}")
+    async def qrcode_status(qrcode: str):
+        s = _qr_sessions.get(qrcode)
+        if not s: return JSONResponse(status_code=404, content={"error":"expired"})
+        try:
+            d = await s["client"].get_qrcode_status(qrcode)
+            st = d.get("status","waiting")
+            r = {"status":st}
+            if st == "confirmed":
+                token = d.get("bot_token","")
+                config.wechat.bot_token = token
+                (Path.home()/".mia"/"wechat_bot_token").write_text(token)
+                await s["client"].stop(); del _qr_sessions[qrcode]
+            elif st in ("expired","timeout"): await s["client"].stop(); del _qr_sessions[qrcode]
+            return r
+        except: return {"status":"error"}
+
+    return app
+
 
 def _session_to_dict(s) -> dict:
     """SessionInfo 转 dict（API 响应用）"""
@@ -1545,14 +1772,12 @@ def main():
     """主入口"""
     args = parse_args()
 
-    if args.server:
-        asyncio.run(run_server(args.port))
-    elif args.query:
+    if args.query:
         asyncio.run(run_cli_query(
             args.query, args.image, args.voice,
         ))
     else:
-        asyncio.run(run_cli_interactive())
+        asyncio.run(run_cli_interactive(port=args.port if args.server else 0))
 
 
 if __name__ == "__main__":
