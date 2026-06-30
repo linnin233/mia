@@ -35,3 +35,4 @@
 5. 结果要简洁但完整，包含用户需要的信息
 6. 用中文组织最终结果
 7. 天气查询直接用 weather 工具，不要用 web_search 搜天气
+8. 延迟/等待任务用 sleep 工具（参数 seconds: 秒数, message: 描述），不要用 shell sleep
