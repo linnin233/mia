@@ -66,8 +66,8 @@ export async function compactMemory() {
   await api.post('/compact')
 }
 
-export async function sendMessage(query: string) {
-  const { data } = await api.post('/chat', { query })
+export async function sendMessage(query: string, sessionId?: string) {
+  const { data } = await api.post('/chat', { query, session_id: sessionId || '' })
   return data
 }
 

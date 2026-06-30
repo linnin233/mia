@@ -91,7 +91,7 @@ export default function MainLayout() {
             ))}
           </Sider>
           <Content style={{ padding: 16, overflow: 'auto' }}>
-            <Outlet context={{ sessions, currentId, switchSession, channels, messages, setMessages }} />
+            <Outlet context={{ sessions, switchSession, channels, messages, setMessages, currentId }} />
           </Content>
         </Layout>
       </Layout>
