@@ -1,12 +1,12 @@
 <template>
-  <el-container style="height: 100vh">
-    <el-header height="56px" style="background: #1a1a2e; color: #eee; display: flex; align-items: center; padding: 0 20px">
-      <span style="font-size: 18px; font-weight: bold; margin-right: 30px">MIA 控制台</span>
+  <el-container style="height: 100vh; overflow: hidden">
+    <el-header height="48px" style="background: #1a1a2e; color: #eee; display: flex; align-items: center; padding: 0 16px; flex-shrink: 0">
+      <span style="font-size: 16px; font-weight: bold; margin-right: 20px; white-space: nowrap">MIA 控制台</span>
       <el-select
         v-model="selectedSession"
         placeholder="选择会话"
         size="small"
-        style="min-width: 180px; max-width: 300px; flex: 1"
+        style="max-width: 220px"
         @change="switchSession"
       >
         <el-option
@@ -29,11 +29,11 @@
         <el-menu-item index="/settings">设置</el-menu-item>
       </el-menu>
     </el-header>
-    <el-container>
-      <el-aside style="width: 16%; min-width: 180px; max-width: 280px; background: #f5f7fa; border-right: 1px solid #e4e7ed; padding: 16px">
+    <el-container style="flex: 1; overflow: hidden">
+      <el-aside style="background: #f5f7fa; border-right: 1px solid #e4e7ed; padding: 12px; overflow-y: auto; flex-shrink: 0">
         <AppSidebar />
       </el-aside>
-      <el-main style="padding: 0; background: #fff">
+      <el-main style="padding: 0; background: #fff; overflow-y: auto; flex: 1">
         <router-view />
       </el-main>
     </el-container>
@@ -60,7 +60,6 @@ onMounted(async () => {
   await sessionStore.fetchSessions()
   await channelStore.fetchStatus()
   selectedSession.value = sessionStore.currentId || ''
-  // 加载当前会话历史消息
   if (selectedSession.value) {
     await chatStore.loadHistory(selectedSession.value)
   }
